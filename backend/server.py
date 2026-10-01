@@ -1299,9 +1299,8 @@ async def create_parked(payload: ParkedTransactionInput, user: dict = Depends(cu
 async def delete_parked(parked_id: str, user: dict = Depends(current_user)):
     ensure_permission(user, "sales")
     result = await db.parked_transactions.delete_one({"id": parked_id, "business_id": user["business_id"]})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Antrian tidak ditemukan")
-    return {"ok": True}
+    # Idempotent: tidak error jika sudah terhapus (menghindari race condition saat edit → simpan ulang)
+    return {"ok": True, "deleted": result.deleted_count}
 
 
 # ---------- Promos ----------
