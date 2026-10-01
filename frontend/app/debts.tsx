@@ -111,13 +111,14 @@ export default function DebtsScreen() {
     finally { setBusy(false); }
   };
 
-  const paymentOptions: { kind: PaymentMethod; label: string }[] = [
-    { kind: "cash", label: PAYMENT_LABELS.cash },
-    { kind: "qris", label: PAYMENT_LABELS.qris },
-    ...methods
-      .filter((m) => m.enabled !== false && m.kind !== "credit")
-      .map((m) => ({ kind: m.kind as PaymentMethod, label: m.label })),
-  ];
+  // Semua metode pembayaran AKTIF yang tersedia KECUALI kredit (karena ini melunasi kredit)
+  const paymentOptions: { id: string; kind: PaymentMethod; label: string }[] = methods
+    .filter((m) => m.enabled !== false && m.kind !== "credit")
+    .map((m) => ({ id: m.id, kind: m.id as PaymentMethod, label: m.name || PAYMENT_LABELS[m.kind] || m.kind }));
+  // Fallback jika belum ada data metode: minimal tunai
+  if (paymentOptions.length === 0) {
+    paymentOptions.push({ id: "cash", kind: "cash", label: PAYMENT_LABELS.cash });
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -152,7 +153,12 @@ export default function DebtsScreen() {
               </View>
               <Text style={[styles.cardTitle, { color: colors.warning }]}>{formatRupiah(tx.outstanding)}</Text>
             </View>
-            <Pressable testID={`pay-${tx.id}`} onPress={() => { setActive(tx); setAmount(String(tx.outstanding)); setMethod("cash"); setMethodLabel(PAYMENT_LABELS.cash); }} style={[styles.primaryButton, { marginTop: 10 }]}>
+            <Pressable testID={`pay-${tx.id}`} onPress={() => {
+              setActive(tx);
+              setAmount(String(tx.outstanding));
+              const first = paymentOptions[0];
+              if (first) { setMethod(first.kind); setMethodLabel(first.label); }
+            }} style={[styles.primaryButton, { marginTop: 10 }]}>
               <Text style={styles.primaryButtonText}>Catat pembayaran</Text>
             </Pressable>
           </View>
