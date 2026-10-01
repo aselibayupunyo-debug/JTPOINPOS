@@ -1,0 +1,148 @@
+{
+  "app_name": "KasirKu Pro",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A precision-engineered mobile point-of-sale and business command center combining Apple-grade clarity with robust offline-first merchant operations.",
+  "color": {
+    "surface": "#F9F9FB",
+    "onSurface": "#1C1C1E",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1C1C1E",
+    "surfaceTertiary": "#F2F2F7",
+    "onSurfaceTertiary": "#3A3A3C",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#F9F9FB",
+    "brand": "#107C41",
+    "brandPrimary": "#107C41",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#0E6635",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#E8F5E9",
+    "onBrandTertiary": "#107C41",
+    "success": "#34C759",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9500",
+    "onWarning": "#FFFFFF",
+    "error": "#FF3B30",
+    "onError": "#FFFFFF",
+    "info": "#007AFF",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5EA",
+    "borderStrong": "#C7C7CC",
+    "divider": "#E5E5EA",
+    "muted": "#8E8E93",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous iOS vertical rhythm with comfortable touch targets and clear grouping.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use frosted glass for sticky search headers and bottom action sheets",
+      "Pair blur with translucent light tint for absolute clarity"
+    ],
+    "dont's": [
+      "Never blur dense lists or form fields",
+      "Do not stack more than two glass layers simultaneously"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "POSCheckout",
+      "purpose": "Lightning-fast catalog browsing, barcode scanning, cart management, and multi-tender checkout.",
+      "states": {
+        "loading": "Skeleton product grid and shimmering cart summary.",
+        "empty": "Illustrated empty cart with prompt to scan barcode or browse categories.",
+        "error": "Banner alert with retry button for scanner or payment gateway sync."
+      },
+      "layout": "Sticky category chips at top, 2-column touch-friendly product grid with real PNG logos, slide-up cart bottom drawer with instant QRIS/Cash/Wallet toggles and sticky bottom checkout CTA."
+    },
+    {
+      "name": "InventoryStock",
+      "purpose": "Comprehensive stock management, low-stock alerts, supplier pricing, and Excel import/export.",
+      "states": {
+        "loading": "Skeleton inventory list rows.",
+        "empty": "Empty state with button to import from Excel or add first product.",
+        "error": "Error alert with sync retry."
+      },
+      "layout": "Search bar with barcode scanner shortcut, filter pills (All, Low Stock, Out of Stock), list of items with stock badge and quick adjust stepper."
+    },
+    {
+      "name": "ReportsAnalytics",
+      "purpose": "Daily, monthly, and yearly sales analytics, profit margin breakdown, and cash flow balance.",
+      "states": {
+        "loading": "Shimmering metric cards and chart placeholders.",
+        "empty": "No transaction data for selected period.",
+        "error": "Failed to load report metrics. Tap to retry."
+      },
+      "layout": "Segmented period toggle (Daily/Monthly/Yearly), KPI cards grid, interactive summary chart, and export-to-WhatsApp/Excel share sheet."
+    },
+    {
+      "name": "OperatorRoles",
+      "purpose": "Admin control center to manage cashiers/operators, assign permissions, and monitor activity logs.",
+      "states": {
+        "loading": "Loading operator list skeleton.",
+        "empty": "No operators registered yet. Add cashier.",
+        "error": "Failed to fetch operator permissions."
+      },
+      "layout": "List of staff cards with role badges (Admin, Cashier, Kitchen, Inventory), permission toggle switches, and 'Add Operator' sticky button."
+    },
+    {
+      "name": "ReceiptSettings",
+      "purpose": "Configure 58mm & 80mm thermal printers via Bluetooth, company logo upload, and kitchen printer routing.",
+      "states": {
+        "loading": "Scanning for nearby Bluetooth thermal printers...",
+        "empty": "No printers paired. Tap scan to discover 58mm/80mm devices.",
+        "error": "Bluetooth connection timeout. Check printer power."
+      },
+      "layout": "Paired devices list, paper size selector (58mm / 80mm), company logo preview box, kitchen printer routing toggles, and 'Test Print' action."
+    }
+  ],
+  "images": {
+    "pos_hero": {
+      "url": "https://images.unsplash.com/photo-1764194790147-8a1e47a91a3f?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "dark": "https://images.unsplash.com/photo-1790156591773-4d398ccbf38a?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Modern point of sale counter with clean terminal"
+    }
+  },
+  "instructions_to_main_agent": "Ensure lightning-fast tactile response on POS sales grid, barcode scanner simulation, multi-printer Bluetooth dispatch, WhatsApp receipt share, and Excel import handling. Follow iOS-native clean styling with generous touch targets (>=44pt) and flawless safe-area handling."
+}
