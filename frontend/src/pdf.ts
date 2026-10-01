@@ -26,26 +26,28 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
   const logoHtml = settings.logo_base64 ? `<img src="data:image/jpeg;base64,${settings.logo_base64}" class="logo" />` : "";
   return `<!doctype html><html><head><meta charset="utf-8" />
 <style>
+  @page { size: A5 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #111; margin: 32px; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f8043; padding-bottom: 16px; margin-bottom: 24px; }
-  .brand { max-width: 60%; }
-  .logo { width: 72px; height: 72px; object-fit: contain; margin-bottom: 8px; border-radius: 10px; }
-  .business { font-size: 22px; font-weight: 800; color: #0f8043; }
-  .addr { color: #555; font-size: 12px; line-height: 1.4; }
-  .meta { text-align: right; font-size: 12px; color: #333; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #111; margin: 0; padding: 12px; width: 148mm; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f8043; padding-bottom: 10px; margin-bottom: 14px; }
+  .brand { max-width: 55%; }
+  .logo { width: 48px; height: 48px; object-fit: contain; margin-bottom: 4px; border-radius: 8px; }
+  .business { font-size: 16px; font-weight: 800; color: #0f8043; }
+  .addr { color: #555; font-size: 10px; line-height: 1.3; }
+  .meta { text-align: right; font-size: 10px; color: #333; }
   .meta .label { color: #777; }
-  .meta .value { font-weight: 700; margin-bottom: 4px; }
-  .section { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 13px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
-  th { text-align: left; background: #0f8043; color: #fff; padding: 10px; font-weight: 700; font-size: 11px; letter-spacing: 0.4px; }
-  td { padding: 10px; border-bottom: 1px solid #e4e4e7; }
+  .meta .value { font-weight: 700; margin-bottom: 2px; font-size: 11px; }
+  .section { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10px; }
+  th { text-align: left; background: #0f8043; color: #fff; padding: 5px; font-weight: 700; font-size: 9px; letter-spacing: 0.3px; }
+  td { padding: 5px; border-bottom: 1px solid #e4e4e7; font-size: 10px; }
   .num { text-align: right; white-space: nowrap; }
-  .totals { margin-top: 16px; margin-left: auto; width: 320px; font-size: 13px; }
-  .totals .row { display: flex; justify-content: space-between; padding: 6px 0; }
-  .totals .grand { border-top: 2px solid #0f8043; margin-top: 8px; padding-top: 10px; font-size: 17px; font-weight: 800; color: #0f8043; }
-  .footer { margin-top: 40px; font-size: 11px; color: #666; border-top: 1px dashed #ccc; padding-top: 14px; text-align: center; }
-  .muted { color: #888; font-size: 11px; }
+  .totals { margin-top: 10px; margin-left: auto; width: 55%; font-size: 11px; }
+  .totals .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .totals .grand { border-top: 2px solid #0f8043; margin-top: 6px; padding-top: 6px; font-size: 14px; font-weight: 800; color: #0f8043; }
+  .footer { margin-top: 18px; font-size: 9px; color: #666; border-top: 1px dashed #ccc; padding-top: 8px; text-align: center; }
+  .muted { color: #888; font-size: 9px; }
+  .label-small { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 0.5px; }
 </style></head>
 <body>
   <div class="header">
@@ -65,7 +67,7 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
   </div>
   <div class="section">${customerBlock}</div>
   <table>
-    <thead><tr><th style="width:36px">#</th><th>Produk</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Diskon</th><th class="num">Subtotal</th></tr></thead>
+    <thead><tr><th style="width:20px">#</th><th>Produk</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Diskon</th><th class="num">Subtotal</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <div class="totals">
@@ -78,7 +80,7 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
     ${tx.outstanding ? `<div class="row"><span>Sisa</span><span>${esc(formatRupiah(tx.outstanding))}</span></div>` : ""}
     ${tx.paid_amount - tx.total > 0 ? `<div class="row"><span>Kembalian</span><span>${esc(formatRupiah(tx.paid_amount - tx.total))}</span></div>` : ""}
   </div>
-  <div class="footer">${esc(settings.footer_note || "Terima kasih atas kunjungan Anda.")}<br/>Dicetak oleh KasirKu Pro</div>
+  <div class="footer">${esc(settings.footer_note || "Terima kasih atas kunjungan Anda.")}<br/>Dicetak oleh KasirKu Pro · ${esc(new Date().toLocaleString("id-ID"))}</div>
 </body></html>`;
 }
 

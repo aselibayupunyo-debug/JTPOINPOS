@@ -327,6 +327,19 @@ export async function downloadProductsExcel(): Promise<{ base64: string; filenam
   return { base64, filename };
 }
 
+export async function updateProfile(payload: { name?: string; current_password: string; new_password?: string }) {
+  return apiRequest<{ ok: boolean; message?: string }>("/profile", { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export async function adminResetTransactions(password: string) {
+  return apiRequest<{ ok: boolean; deleted: Record<string, number> }>("/admin/reset-transactions", { method: "POST", body: JSON.stringify({ password }) });
+}
+
+export async function adminDeleteAllProducts(password: string) {
+  return apiRequest<{ ok: boolean; deleted: number }>("/admin/delete-all-products", { method: "POST", body: JSON.stringify({ password }) });
+}
+
+
 export function formatRupiah(value: number) {
   return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
 }

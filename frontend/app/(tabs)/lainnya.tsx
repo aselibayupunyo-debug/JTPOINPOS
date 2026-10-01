@@ -1,12 +1,13 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Share, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, IntegrationState } from "@/src/api";
+import { adminDeleteAllProducts, adminResetTransactions, apiRequest, IntegrationState } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
+import { AdminPasswordModal } from "@/src/components/admin-password-modal";
 import { Header } from "@/src/components/header";
 import { SyncBanner } from "@/src/components/sync-banner";
 import { useTheme } from "@/src/theme";
@@ -21,6 +22,8 @@ export default function LainnyaScreen() {
   const { user, can, signOut } = useAuth();
   const toast = useToast();
   const [integrations, setIntegrations] = useState<IntegrationState | null>(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const load = useCallback(async () => {
     try { setIntegrations(await apiRequest<IntegrationState>("/integrations/status")); }
@@ -46,12 +49,30 @@ export default function LainnyaScreen() {
     { icon: "person-add-outline", title: "Operator & kewenangan", detail: "Atur akses tim kasir", path: "/operators", ownerOnly: true },
     { icon: "archive-outline", title: "Backup & Restore (ZIP)", detail: "Simpan dan pulihkan seluruh data", path: "/backup", ownerOnly: true },
     { icon: "print-outline", title: "Pengaturan toko & struk", detail: "Logo, printer 58/80mm, WhatsApp", path: "/settings", permission: "settings" },
+    { icon: "person-circle-outline", title: "Profil & Password", detail: "Ubah nama tampilan & password admin", path: "/profile", ownerOnly: true },
   ];
 
   const canSee = (item: MenuItem) => {
     if (item.ownerOnly) return user?.role === "owner";
     if (item.permission) return can(item.permission);
     return true;
+  };
+
+  const resetTx = async (password: string) => {
+    try {
+      const res = await adminResetTransactions(password);
+      setResetOpen(false);
+      const d = res.deleted;
+      toast.success("Transaksi direset", `Dihapus: ${d.transactions} transaksi · ${d.parked} antrian · ${d.cashflow} kas · ${d.shifts} shift`);
+    } catch (e) { toast.error("Gagal reset", e instanceof Error ? e.message : undefined); }
+  };
+
+  const deleteProducts = async (password: string) => {
+    try {
+      const res = await adminDeleteAllProducts(password);
+      setDeleteOpen(false);
+      toast.success("Produk dihapus", `${res.deleted} produk telah dihapus permanen`);
+    } catch (e) { toast.error("Gagal hapus produk", e instanceof Error ? e.message : undefined); }
   };
 
   return (
@@ -76,6 +97,7 @@ export default function LainnyaScreen() {
             </Pressable>
           ))}
         </View>
+
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Data & keamanan</Text>
           <Pressable testID="backup-button" onPress={async () => {
@@ -99,11 +121,74 @@ export default function LainnyaScreen() {
             </View>
           </View>
         </View>
+
+        {user?.role === "owner" ? (
+          <View style={[styles.card, { borderWidth: 1, borderColor: colors.error }]}>
+            <Text style={[styles.cardTitle, { color: colors.error }]}>Zona berbahaya</Text>
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>Aksi di sini permanen dan harus dikonfirmasi dengan password pemilik.</Text>
+            <Pressable testID="reset-transactions-button" onPress={() => {
+              Alert.alert(
+                "Reset semua transaksi?",
+                "Semua transaksi, antrian, arus kas, dan shift akan terhapus permanen. Produk, pelanggan, dan supplier tetap.",
+                [
+                  { text: "Batal", style: "cancel" },
+                  { text: "Lanjutkan", style: "destructive", onPress: () => setResetOpen(true) },
+                ],
+              );
+            }} style={styles.listRow}>
+              <View style={[styles.settingIcon, { backgroundColor: colors.surfaceTertiary }]}>
+                <Ionicons name="refresh-outline" size={20} color={colors.error} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.productName}>Reset semua transaksi</Text>
+                <Text style={styles.muted}>Hapus riwayat jual/beli/retur, antrian, kas, dan shift</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={19} color={colors.muted} />
+            </Pressable>
+            <Pressable testID="delete-all-products-button" onPress={() => {
+              Alert.alert(
+                "Hapus semua produk?",
+                "Seluruh katalog produk akan dihapus permanen. Transaksi tetap tersimpan.",
+                [
+                  { text: "Batal", style: "cancel" },
+                  { text: "Lanjutkan", style: "destructive", onPress: () => setDeleteOpen(true) },
+                ],
+              );
+            }} style={styles.listRow}>
+              <View style={[styles.settingIcon, { backgroundColor: colors.surfaceTertiary }]}>
+                <Ionicons name="trash-outline" size={20} color={colors.error} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.productName}>Hapus semua produk</Text>
+                <Text style={styles.muted}>Kosongkan katalog & stok secara permanen</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={19} color={colors.muted} />
+            </Pressable>
+          </View>
+        ) : null}
+
         <Pressable testID="logout-button" onPress={signOut} style={[styles.dangerButton, { marginTop: 6 }]}>
           <Text style={styles.dangerText}>Keluar dari akun</Text>
         </Pressable>
         <Text style={[styles.muted, { textAlign: "center", marginTop: 20 }]}>KasirKu Pro · Semua modul tersinkron ke laporan</Text>
       </ScrollView>
+
+      <AdminPasswordModal
+        visible={resetOpen}
+        title="Reset semua transaksi"
+        description="Tindakan ini akan menghapus seluruh transaksi, antrian, arus kas, dan shift. Produk dan pelanggan tetap. Ketik password pemilik untuk melanjutkan."
+        confirmLabel="Reset Transaksi"
+        onCancel={() => setResetOpen(false)}
+        onConfirm={resetTx}
+      />
+      <AdminPasswordModal
+        visible={deleteOpen}
+        title="Hapus semua produk"
+        description="Semua produk & stok di katalog akan dihapus permanen. Ketik password pemilik untuk melanjutkan."
+        confirmLabel="Hapus Semua Produk"
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={deleteProducts}
+      />
     </View>
   );
 }

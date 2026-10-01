@@ -26,8 +26,8 @@ Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to 
 1. Produk Jasa (goods/service)
 2. Multi-satuan dengan konversi dasar
 3. Price Level linked to Customer
-4. Batal transaksi (void)
-5. Antrian wajib nama + struk antrian + batal eksplisit
+4. Batal transaksi kasir (clear cart via Modal confirm)
+5. Antrian wajib nama + struk antrian + edit mode (resume → ubah qty → re-park)
 6. Header struk 4 baris
 7. Footer struk 4 baris
 8. Kirim struk JPEG
@@ -35,4 +35,10 @@ Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to 
 10. Metric ringkasan tappable → detail
 11. Operator tappable → barang terjual
 12. Detail barang terjual (date/time)
-13. Semua laporan → PDF
+13. Semua laporan → PDF via share sheet (WA/Email/dll)
+14. Profil & Password admin (PUT /api/profile)
+15. Reset semua transaksi (password admin) - keeps products/customers/suppliers
+16. Hapus semua produk (password admin)
+17. Invoice jadi A5 (CSS @page size A5 portrait)
+18. Hapus tombol Batal di Riwayat Transaksi
+19. Multi-satuan dialog pilihan dibuat Modal (fix bisa diklik di web & native)

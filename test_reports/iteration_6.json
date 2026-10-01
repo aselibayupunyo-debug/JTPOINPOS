@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration-6 backend-only testing for KasirKu Pro session 2026-10 (3 new admin endpoints + regression). ALL 23/23 new tests PASS and full suite 140/140 PASS when run serially (-o addopts=). The 3 new endpoints behave to spec: (1) PUT /api/profile — name-only, password-only, and no-op paths all 200; wrong current_password 400; new_password <6 chars 422; after password change old login fails and new login works. (2) POST /api/admin/reset-transactions — happy path deletes transactions+parked+cash_entries+shifts and returns {ok:true, deleted:{transactions,parked,cashflow,shifts}}; products/customers/suppliers/categories/payment-methods seed are PRESERVED (verified via GET after reset); non-owner (cashier) 403; wrong password 400; missing password 422. (3) POST /api/admin/delete-all-products — happy path returns {ok:true, deleted:N} and only products collection emptied (transactions and customers untouched); non-owner 403; wrong password 400. Regression also confirmed: PUT /api/settings now STRIPS empty/whitespace header_lines & footer_lines (iter-5 minor issue is RESOLVED — ['TOKO','','   ','Jl. Mawar'] -> ['TOKO','Jl. Mawar']); max 4 still enforced (422). Service sale skips stock; multi-unit (Dus factor=12) decrements by qty*factor=24; POST /api/parked 422 on empty customer_name; /api/reports/sales-items excludes cancelled transactions; /api/products/export returns xlsx with correct columns. Note on test runner: /app/backend/pytest.ini has -n 2 --dist loadscope which breaks test_iter5_features cross-class pytest.* module attribute coordination (6 iter-5 tests fail under xdist). Running with -o addopts= disables xdist and yields 140/140 PASS. This is a known iter-5 test-design issue (noted in iteration_5.json context_for_next_testing_agent), not a product regression.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/admin/reset-transactions",
+        "issue": "Also deletes shifts regardless of state. If a shift is open at reset time, there is no warning or auto-close — the shift row is just hard-deleted. Low risk; main agent may want to add a UI confirmation step. Debt payments live inside transaction docs (payments array) and are removed implicitly when transactions are deleted — OK."
+      },
+      {
+        "endpoint": "POST /api/admin/delete-all-products",
+        "issue": "Does NOT also delete related promos.conditions or parked_transactions.items referencing those products. After delete-all, any surviving parked transaction or promo will contain dangling product_id references that will 404-ish or price-0 on resume. Consider cascading or warning the user. Not blocking since reset-transactions deletes parked already if run together."
+      },
+      {
+        "endpoint": "PUT /api/profile",
+        "issue": "`new_password` validator uses min_length=6 which raises 422, but request bullet says wrong-current returns 400 and happy path 200 — both verified. Minor: there is no `confirm_password` field enforced server-side; client must handle. Acceptable."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_admin.py",
+    "/app/test_reports/pytest/iteration6_results.xml",
+    "/app/test_reports/pytest/iteration6_full_serial.xml",
+    "/app/test_reports/pytest/iteration6_full.xml"
+  ],
+  "action_items": [
+    "(Optional) Decide whether POST /api/admin/delete-all-products should cascade to parked_transactions and promos.conditions referencing deleted product_ids, or at least return a count of orphans so the UI can warn. Currently they stay with dangling references.",
+    "(Optional) POST /api/admin/reset-transactions should warn/auto-close an open shift before hard-deleting, OR require explicit confirmation when a shift is open.",
+    "(Carried over from iter-5) Fix /app/backend/pytest.ini addopts: `-n 2 --dist loadscope` breaks test_iter5_features which coordinates state via `pytest.sale_tx_id` module attrs across workers. Either (a) refactor iter5 to use class-scope fixtures or (b) move iter5 cancel/report tests into a single worker (loadfile scope) or (c) accept running serially. 140/140 passes with `-o addopts=`; 134/140 under default.",
+    "(Carried over) server.py now 1410 lines; still over 700-line soft limit — split into routers (auth/products/transactions/admin/reports/settings/...)."
+  ],
+  "critical_code_review_comments": [
+    "server.py:449-471 (PUT /api/profile): correctly bcrypt-verifies current_password, 400 on wrong, no-op allowed. Pydantic Field(min_length=6) on new_password gives server-side protection against weak new passwords; nice.",
+    "server.py:474-507 (_require_owner_password + admin endpoints): proper role check (403 if not owner), proper password check (400 if wrong), proper 422 if password field missing. Deletes are scoped by business_id — multi-tenant safety OK.",
+    "server.py:815-844 (BusinessSettingsInput._strip_empty + __init__ post-init): header_lines/footer_lines are both stripped-and-filtered to non-empty then truncated to 4 BEFORE storage. Resolves the iter-5 minor issue cleanly.",
+    "server.py:486-498: reset-transactions returns a clear counts dict — frontend can show '12 transaksi, 2 parked, 5 kas, 1 shift dihapus'.",
+    "Admin endpoints DO NOT invalidate tokens / clear sessions. Fine since destructive ops happen while owner is logged in and user doc is untouched.",
+    "No audit log / activity record is written for admin resets or product-wipe. Consider an audit_log collection for compliance in a future iteration (not in review scope)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_admin.py (NEW, 23 tests covering 3 new admin endpoints + 10 regression checks)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 iter-6 new; 140/140 full regression serial run; 134/140 under default xdist due to pre-existing iter-5 test-design issue, not a code regression)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Each test class owns a fresh owner (iter6prof_<uuid>, iter6rst_<uuid>, iter6del_<uuid>, iter6reg_<uuid>) registered via POST /api/auth/register to isolate state. Each creates TEST_Iter6-prefixed products/customers/suppliers/categories/transactions/parked/cash_entries/shifts/operators as needed, then the reset/delete tests verify counts. All data is scoped per business_id so re-runs are idempotent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for the full 140-test regression. The `-o addopts=` flag is REQUIRED to disable xdist loadscope — otherwise iter-5 cancel/report tests fail due to cross-worker pytest.sale_tx_id module-attribute coordination (this is iter-5 test-design, NOT a product regression). The 3 new iter-6 admin endpoints (PUT /api/profile, POST /api/admin/reset-transactions, POST /api/admin/delete-all-products) are fully implemented and all paths (happy/403/400/422) verified. Settings strip-empty is now fixed. If frontend testing is requested next, focus on: profile.tsx password change flow, lainnya.tsx 'Reset Transaksi' + 'Hapus Semua Produk' buttons wired to admin-password-modal.tsx, A5 invoice rendering, Daftar/history Batal button removal, kasir cart Batal reset, antrian edit/re-park flow, PDF export + WA/email share.",
+  "rca_of_issue": "N/A — forward-testing iteration for 3 new admin endpoints. All implementations correct per spec. The iter-5 settings strip-empty gap flagged previously is now resolved via BusinessSettingsInput._strip_empty + __init__ post-init at server.py:815-844."
+}

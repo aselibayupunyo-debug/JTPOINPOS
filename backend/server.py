@@ -446,6 +446,68 @@ async def get_transaction(transaction_id: str, user: dict = Depends(current_user
     return doc
 
 
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=120)
+    current_password: str = Field(min_length=1)
+    new_password: Optional[str] = Field(default=None, min_length=6, max_length=120)
+
+
+@api_router.put("/profile")
+async def update_profile(payload: ProfileUpdate, user: dict = Depends(current_user)):
+    """Update owner profile: name and/or password. Current password required."""
+    me = await db.users.find_one({"id": user["id"]})
+    if not me:
+        raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
+    if not bcrypt.checkpw(payload.current_password.encode(), me["password_hash"].encode()):
+        raise HTTPException(status_code=400, detail="Password saat ini salah")
+    patch: dict[str, Any] = {}
+    if payload.name and payload.name.strip():
+        patch["name"] = payload.name.strip()
+    if payload.new_password:
+        patch["password_hash"] = bcrypt.hashpw(payload.new_password.encode(), bcrypt.gensalt()).decode()
+    if not patch:
+        return {"ok": True, "message": "Tidak ada perubahan"}
+    await db.users.update_one({"id": user["id"]}, {"$set": patch})
+    return {"ok": True}
+
+
+class AdminPasswordInput(BaseModel):
+    password: str = Field(min_length=1)
+
+
+async def _require_owner_password(payload: AdminPasswordInput, user: dict) -> None:
+    if user.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Hanya pemilik yang boleh melakukan aksi ini")
+    me = await db.users.find_one({"id": user["id"]})
+    if not me or not bcrypt.checkpw(payload.password.encode(), me["password_hash"].encode()):
+        raise HTTPException(status_code=400, detail="Password pemilik salah")
+
+
+@api_router.post("/admin/reset-transactions")
+async def admin_reset_transactions(payload: AdminPasswordInput, user: dict = Depends(current_user)):
+    """Dangerous: delete all transactions (sale/purchase/returns), parked, cashflow, shifts, debt payments.
+    Products, categories, customers, suppliers, settings tetap. Verified by owner password."""
+    await _require_owner_password(payload, user)
+    biz = user["business_id"]
+    results = {
+        "transactions": (await db.transactions.delete_many({"business_id": biz})).deleted_count,
+        "parked": (await db.parked_transactions.delete_many({"business_id": biz})).deleted_count,
+        "cashflow": (await db.cash_entries.delete_many({"business_id": biz})).deleted_count,
+        "shifts": (await db.shifts.delete_many({"business_id": biz})).deleted_count,
+    }
+    return {"ok": True, "deleted": results}
+
+
+@api_router.post("/admin/delete-all-products")
+async def admin_delete_all_products(payload: AdminPasswordInput, user: dict = Depends(current_user)):
+    """Dangerous: delete all products in business. Verified by owner password."""
+    await _require_owner_password(payload, user)
+    biz = user["business_id"]
+    count = (await db.products.delete_many({"business_id": biz})).deleted_count
+    return {"ok": True, "deleted": count}
+
+
+
 class CancelInput(BaseModel):
     reason: str = ""
 

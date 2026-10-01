@@ -1,12 +1,11 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
-import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -20,7 +19,6 @@ export default function HistoryScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const { user } = useAuth();
   const [list, setList] = useState<TransactionDoc[]>([]);
   const [filter, setFilter] = useState<"all" | TransactionDoc["transaction_type"]>("all");
 
@@ -30,31 +28,6 @@ export default function HistoryScreen() {
   }, [filter, toast]);
 
   useEffect(() => { load(); }, [load]);
-
-  const askCancel = (tx: TransactionDoc) => {
-    Alert.alert(
-      "Batalkan transaksi?",
-      `${tx.invoice_no} akan dibatalkan. Stok akan dikembalikan dan transaksi dikeluarkan dari laporan.`,
-      [
-        { text: "Tidak", style: "cancel" },
-        {
-          text: "Ya, batalkan",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await apiRequest(`/transactions/${tx.id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "" }) });
-              toast.success("Transaksi dibatalkan", tx.invoice_no);
-              load();
-            } catch (e) {
-              toast.error("Gagal membatalkan", e instanceof Error ? e.message : undefined);
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  const canCancel = (tx: TransactionDoc) => user?.role === "owner" || user?.role === "manager" || tx.created_by === user?.id;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -103,13 +76,8 @@ export default function HistoryScreen() {
                 <Text style={styles.outlineText}>Cetak ulang / Lihat struk</Text>
               </Pressable>
               <Pressable testID={`invoice-${tx.id}`} onPress={() => router.push({ pathname: "/invoice", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 8 }]}>
-                <Text style={styles.outlineText}>Invoice PDF (A4)</Text>
+                <Text style={styles.outlineText}>Invoice PDF (A5)</Text>
               </Pressable>
-              {!cancelled && canCancel(tx) ? (
-                <Pressable testID={`cancel-tx-${tx.id}`} onPress={() => askCancel(tx)} style={[styles.dangerButton, { marginTop: 8 }]}>
-                  <Text style={styles.dangerText}>Batalkan transaksi</Text>
-                </Pressable>
-              ) : null}
             </View>
           );
         })}

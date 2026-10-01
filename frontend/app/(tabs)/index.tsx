@@ -42,6 +42,9 @@ export default function KasirScreen() {
   const [priceLevel, setPriceLevel] = useState<string>("default");
   const [parkPromptOpen, setParkPromptOpen] = useState(false);
   const [parkName, setParkName] = useState("");
+  const [unitPicker, setUnitPicker] = useState<null | { product: Product; options: { name: string; factor: number; price: number }[] }>(null);
+  const [editingParkedId, setEditingParkedId] = useState<string | null>(null);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
 
   const load = useCallback(async () => {
@@ -84,9 +87,9 @@ export default function KasirScreen() {
         setCart(resumed);
         setPriceLevel(match.price_level_id || "default");
         if (match.customer_id) setCustomer(customers.find((c) => c.id === match.customer_id) ?? null);
-        await apiRequest(`/parked/${match.id}`, { method: "DELETE" });
-        toast.info("Antrian dilanjutkan", match.label || match.customer_name);
-        setParkedCount((n) => Math.max(0, n - 1));
+        else if (match.customer_name) setCustomer({ id: "", name: match.customer_name, phone: "", address: "", note: "" } as Contact);
+        setEditingParkedId(match.id);
+        toast.info("Antrian dilanjutkan", `${match.customer_name} · dapat diedit`);
       } catch { /* ignore */ }
     })();
   }, [params.parked, products, customers, toast]);
@@ -151,30 +154,28 @@ export default function KasirScreen() {
   const filtered = products.filter((p) => (category === "Semua" || p.category === category) && `${p.name} ${p.barcode} ${p.sku}`.toLowerCase().includes(search.toLowerCase()));
   const totalCart = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
+  const addLineToCart = (product: Product, unit: string, factor: number, unitPrice: number) => {
+    setCart((current) => {
+      const lineId = `${product.id}:${unit}`;
+      const exists = current.find((item) => item.line_id === lineId);
+      if (exists) return current.map((item) => item.line_id === lineId ? { ...item, quantity: item.quantity + 1 } : item);
+      return [...current, { ...product, line_id: lineId, product_id: product.id, quantity: 1, price: unitPrice, unit, unit_factor: factor } as CartItem];
+    });
+  };
+
   const addToCart = (product: Product) => {
     if (product.product_type !== "service" && product.stock <= 0) return toast.error("Stok habis", product.name);
     const priceAtLevel = priceOf(product);
-    const addLine = (unit: string, factor: number, unitPrice: number) => {
-      setCart((current) => {
-        const lineId = `${product.id}:${unit}`;
-        const exists = current.find((item) => item.line_id === lineId);
-        if (exists) return current.map((item) => item.line_id === lineId ? { ...item, quantity: item.quantity + 1 } : item);
-        return [...current, { ...product, line_id: lineId, product_id: product.id, quantity: 1, price: unitPrice, unit, unit_factor: factor } as CartItem];
-      });
-    };
     const hasUnits = (product.units ?? []).length > 0;
     if (hasUnits) {
       const unitValues: { name: string; factor: number; price: number }[] = [
         { name: product.base_unit ?? "Pcs", factor: 1, price: priceAtLevel },
         ...(product.units ?? []).map((u) => ({ name: u.name, factor: u.factor, price: u.price || priceAtLevel * u.factor })),
       ];
-      Alert.alert(product.name, "Pilih satuan", [
-        ...unitValues.map((u) => ({ text: `${u.name} (×${u.factor}) · ${formatRupiah(u.price)}`, onPress: () => addLine(u.name, u.factor, u.price) })),
-        { text: "Batal", style: "cancel" as const },
-      ]);
+      setUnitPicker({ product, options: unitValues });
       return;
     }
-    addLine(product.base_unit ?? "Pcs", 1, priceAtLevel);
+    addLineToCart(product, product.base_unit ?? "Pcs", 1, priceAtLevel);
   };
   const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: i.quantity + delta } : i).filter((i) => i.quantity > 0));
   const changePrice = (lineId: string, nextPrice: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, price: nextPrice } : i));
@@ -248,6 +249,10 @@ export default function KasirScreen() {
       };
       const parked = await apiRequest<ParkedTransaction>("/parked", { method: "POST", body: JSON.stringify(payload) });
       toast.success("Transaksi diparkir", `${name} · ${formatRupiah(totalPark)}`);
+      if (editingParkedId && editingParkedId !== parked.id) {
+        try { await apiRequest(`/parked/${editingParkedId}`, { method: "DELETE" }); } catch { /* ignore */ }
+      }
+      setEditingParkedId(null);
       setCart([]); setCustomer(null);
       setParkedCount((n) => n + 1);
       setParkPromptOpen(false);
@@ -261,14 +266,13 @@ export default function KasirScreen() {
   };
 
   const cancelTransaction = () => {
-    if (cart.length === 0) return;
-    const doCancel = () => { setCart([]); setCustomer(null); toast.info("Transaksi dibatalkan"); setCheckout(false); };
-    if (settings?.confirm_cancel) {
-      Alert.alert("Batalkan transaksi?", "Semua item di keranjang akan dihapus.", [
-        { text: "Tidak", style: "cancel" },
-        { text: "Ya, batal", style: "destructive", onPress: doCancel },
-      ]);
-    } else { doCancel(); }
+    if (cart.length === 0) return toast.info("Keranjang sudah kosong");
+    const doCancel = () => {
+      setCart([]); setCustomer(null); setEditingParkedId(null); setCheckout(false); setCancelConfirmOpen(false);
+      toast.info("Transaksi dibatalkan");
+    };
+    if (settings?.confirm_cancel === false) return doCancel();
+    setCancelConfirmOpen(true);
   };
 
   return (
@@ -293,6 +297,19 @@ export default function KasirScreen() {
           }
         />
         <SyncBanner />
+        {editingParkedId ? (
+          <View style={[styles.card, { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]} testID="editing-parked-banner">
+            <View style={styles.between}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.productName, { color: colors.brandPrimary }]}>Mengedit antrian · {customer?.name ?? "Pelanggan"}</Text>
+                <Text style={styles.muted}>Simpan kembali ke antrian atau selesaikan di checkout.</Text>
+              </View>
+              <Pressable testID="exit-edit-parked" onPress={() => setEditingParkedId(null)} style={{ padding: 6 }}>
+                <Ionicons name="close" size={20} color={colors.brandPrimary} />
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         <View style={styles.row}>
           <TextInput testID="search-input" value={search} onChangeText={setSearch} placeholder="Cari nama / barcode / SKU" placeholderTextColor={colors.muted} style={styles.search} />
           <Pressable testID="scan-button" onPress={openScanner} style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.75 }]}>
@@ -361,7 +378,7 @@ export default function KasirScreen() {
           </View>
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
             <Pressable testID="park-button" onPress={parkTransaction} style={[styles.outlineButton, { flex: 1, borderColor: colors.onSurfaceInverse }]}>
-              <Text style={{ color: colors.onSurfaceInverse, fontWeight: "800", fontSize: 13 }}>Park / Antri</Text>
+              <Text style={{ color: colors.onSurfaceInverse, fontWeight: "800", fontSize: 13 }}>{editingParkedId ? "Simpan ke antrian" : "Park / Antri"}</Text>
             </Pressable>
             <Pressable testID="cancel-button" onPress={cancelTransaction} style={[styles.outlineButton, { flex: 1, borderColor: colors.error }]}>
               <Text style={{ color: colors.error, fontWeight: "800", fontSize: 13 }}>Batal</Text>
@@ -429,6 +446,61 @@ export default function KasirScreen() {
         </View>
       </Modal>
 
+      <Modal visible={!!unitPicker} transparent animationType="fade" onRequestClose={() => setUnitPicker(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: insets.bottom + 20 }}>
+            <View style={styles.between}>
+              <Text style={styles.cardTitle} testID="unit-picker-title">{unitPicker?.product.name}</Text>
+              <Pressable onPress={() => setUnitPicker(null)}><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>
+            </View>
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>Pilih satuan yang akan dijual.</Text>
+            {(unitPicker?.options ?? []).map((u, idx) => (
+              <Pressable
+                key={`${u.name}-${idx}`}
+                testID={`unit-option-${u.name}`}
+                onPress={() => {
+                  if (!unitPicker) return;
+                  addLineToCart(unitPicker.product, u.name, u.factor, u.price);
+                  setUnitPicker(null);
+                }}
+                style={styles.listRow}
+              >
+                <View style={styles.settingIcon}><Ionicons name="cube-outline" size={20} color={colors.brandPrimary} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.productName}>{u.name}</Text>
+                  <Text style={styles.muted}>×{u.factor} satuan dasar</Text>
+                </View>
+                <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(u.price)}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={cancelConfirmOpen} transparent animationType="fade" onRequestClose={() => setCancelConfirmOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
+            <Text style={styles.cardTitle}>Batalkan transaksi?</Text>
+            <Text style={[styles.muted, { marginTop: 6, marginBottom: 14 }]}>Semua item di keranjang akan dihapus.</Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Pressable onPress={() => setCancelConfirmOpen(false)} style={[styles.outlineButton, { flex: 1 }]}>
+                <Text style={styles.outlineText}>Tidak</Text>
+              </Pressable>
+              <Pressable
+                testID="confirm-cancel-cart"
+                onPress={() => {
+                  setCart([]); setCustomer(null); setEditingParkedId(null); setCheckout(false); setCancelConfirmOpen(false);
+                  toast.info("Transaksi dibatalkan");
+                }}
+                style={[styles.dangerButton, { flex: 1 }]}
+              >
+                <Text style={styles.dangerText}>Ya, batalkan</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <CheckoutSheet
         visible={checkout}
         onClose={() => setCheckout(false)}
@@ -465,6 +537,10 @@ export default function KasirScreen() {
               toast.success("Transaksi berhasil", "Stok & laporan diperbarui.");
             }
             setCart([]); setCustomer(null); setCheckout(false);
+            if (editingParkedId) {
+              try { await apiRequest(`/parked/${editingParkedId}`, { method: "DELETE" }); } catch { /* ignore */ }
+              setEditingParkedId(null);
+            }
             await load();
             const txId = (result.data as { id?: string } | null)?.id;
             if (txId) router.push({ pathname: "/receipt", params: { id: txId } });
