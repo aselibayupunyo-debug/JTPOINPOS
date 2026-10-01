@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, Share, Text, View } from "react-native";
+import { Pressable, ScrollView, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { adminDeleteAllProducts, adminResetTransactions, apiRequest, IntegrationState } from "@/src/api";
@@ -126,16 +126,7 @@ export default function LainnyaScreen() {
           <View style={[styles.card, { borderWidth: 1, borderColor: colors.error }]}>
             <Text style={[styles.cardTitle, { color: colors.error }]}>Zona berbahaya</Text>
             <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>Aksi di sini permanen dan harus dikonfirmasi dengan password pemilik.</Text>
-            <Pressable testID="reset-transactions-button" onPress={() => {
-              Alert.alert(
-                "Reset semua transaksi?",
-                "Semua transaksi, antrian, arus kas, dan shift akan terhapus permanen. Produk, pelanggan, dan supplier tetap.",
-                [
-                  { text: "Batal", style: "cancel" },
-                  { text: "Lanjutkan", style: "destructive", onPress: () => setResetOpen(true) },
-                ],
-              );
-            }} style={styles.listRow}>
+            <Pressable testID="reset-transactions-button" onPress={() => setResetOpen(true)} style={styles.listRow}>
               <View style={[styles.settingIcon, { backgroundColor: colors.surfaceTertiary }]}>
                 <Ionicons name="refresh-outline" size={20} color={colors.error} />
               </View>
@@ -145,16 +136,7 @@ export default function LainnyaScreen() {
               </View>
               <Ionicons name="chevron-forward" size={19} color={colors.muted} />
             </Pressable>
-            <Pressable testID="delete-all-products-button" onPress={() => {
-              Alert.alert(
-                "Hapus semua produk?",
-                "Seluruh katalog produk akan dihapus permanen. Transaksi tetap tersimpan.",
-                [
-                  { text: "Batal", style: "cancel" },
-                  { text: "Lanjutkan", style: "destructive", onPress: () => setDeleteOpen(true) },
-                ],
-              );
-            }} style={styles.listRow}>
+            <Pressable testID="delete-all-products-button" onPress={() => setDeleteOpen(true)} style={styles.listRow}>
               <View style={[styles.settingIcon, { backgroundColor: colors.surfaceTertiary }]}>
                 <Ionicons name="trash-outline" size={20} color={colors.error} />
               </View>

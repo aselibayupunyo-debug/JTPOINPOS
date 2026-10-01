@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration-8 backend-only regression for KasirKu Pro session 2026-10 iter-8 (frontend-only polish release). ALL 157/157 tests PASS (153 carried-over + 4 new iter-8) when run serially with `-o addopts=`. iter-8 ships ZERO backend changes — only FE polish (debt payment UI excludes 'credit', receipt share/A4 buttons removed, Preview struk guards web, parked resume consumedParkedRef guard, scanner camera on cart floating card). Re-ran full regression suite + added 4 focused tests that pin the backend contracts the FE fixes depend on: (1) Parked EDIT flow — DELETE old parked /api/parked/{id} then POST /api/parked with customer_id + price_level_id persists both fields atomically (verified via LIST). Old id removed, new id returned 200 with price_level_id='grosir' and customer_id set. (2) Stale parked DELETE returns exactly `404 'Antrian tidak ditemukan'` — this is the error the FE consumedParkedRef must swallow after sale success. Verified both re-delete of consumed id AND random uuid return 404. (3) Backend does NOT auto-delete parked on sale creation — proved parked row still exists after POST /api/transactions, confirming FE still owns the DELETE call and must be idempotent against 404 (which is exactly what iter-8 consumedParkedRef fixes). (4) /api/transactions/{id}/pay still accepts payment_method + payment_method_label (iter-7 contract carry — 200 with outstanding=0, payment entry contains both fields). All iter-5 regressions verified via full-suite pass: multi-unit sale qty 1 Dus (factor 12) decrements stock by 12 (test_goods_sale_with_unit_factor_decrements_by_qty_times_factor); service products skip stock delta; /reports/sales-items daily returns flat list with product_id/operator_id filters; /transactions?kind=sale list works; /customers price_level_id persisted. iter-7 regressions: audit-logs owner-only 403 for cashier, reset_transactions/delete_all_products write exactly one audit entry each, PUT /profile username case-insensitive clash → 400, <3 chars → 422, old username can't login after change. No backend regressions introduced by iter-8 UI work (as expected since server.py untouched between iter-7 and iter-8).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "DELETE /api/parked/{id}",
+        "issue": "404 response body is a JSON string 'Antrian tidak ditemukan' rather than a stable error code — the FE consumedParkedRef guard is now relied upon as the ONLY safeguard against user-visible toasts. Consider adding an idempotent flag (e.g. ?idempotent=true -> 200 with {deleted:false}) OR a typed error code like {code:'PARKED_NOT_FOUND'} so future clients can discriminate without string-matching Indonesian copy."
+      },
+      {
+        "endpoint": "POST /api/parked",
+        "issue": "No server-side de-dup / optimistic version — the EDIT flow (DELETE old + POST new) is non-atomic server-side. If the DELETE succeeds but POST fails (network/network), the user loses the parked silently. Not blocking current UX but a future PUT /api/parked/{id} would be safer."
+      },
+      {
+        "endpoint": "(carried) GET /api/audit-logs",
+        "issue": "Still no action/date filters or pagination cursor (iter-7 carry)."
+      },
+      {
+        "endpoint": "(carried) POST /api/transactions/{id}/pay",
+        "issue": "payment_method_label still defaults to raw method key when omitted (iter-7 carry)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter8_regression.py",
+    "/app/test_reports/pytest/iteration8_results.xml",
+    "/app/test_reports/pytest/iteration8_full.xml"
+  ],
+  "action_items": [
+    "(Carried) /app/backend/pytest.ini still ships `-n 2 --dist loadscope`; must run full regression with `-o addopts=` to avoid iter-5 cross-worker state collisions. Not a product bug but a long-standing test-runner config issue.",
+    "(Carried) server.py is 1457 lines — above 700-line soft limit. Split into routers (auth / products / transactions / admin / reports / settings / parked / audit).",
+    "(Optional) DELETE /api/parked/{id}: make idempotent OR return typed error code so FE doesn't string-match 'Antrian tidak ditemukan'.",
+    "(Optional) Add PUT /api/parked/{id} to replace the DELETE+POST edit pattern atomically.",
+    "(Optional, carried) Audit log filter/pagination; resolve payment_method_label from configured methods when omitted."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1298-1304 (DELETE /parked/{id}): Correctly returns 404 with detail 'Antrian tidak ditemukan' when row absent. This is the exact error the FE iter-8 consumedParkedRef must suppress after sale completion. Behavior verified.",
+    "server.py:1290-1296 (POST /parked): Accepts customer_id + price_level_id via ParkedTransactionInput and persists them verbatim; LIST returns them. Edit flow (DELETE+POST) works but is non-atomic.",
+    "server.py:111-121 (ParkedTransactionInput): customer_id Optional[str], price_level_id default 'default', items List[TransactionItem]. Good schema.",
+    "server.py:593-625 (pay_debt): Unchanged from iter-7, still correctly carries payment_method + payment_method_label into transaction.payments[] and cash_entries note.",
+    "No backend code changes between iter-7 and iter-8 (verified by diff of imports/routes/models) — frontend-only iteration as advertised.",
+    "Backend does NOT auto-delete parked when a transaction with the same items is created — this is by design (parked and transactions are decoupled collections). FE must call DELETE after sale success and handle 404 gracefully."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter8_regression.py (NEW, 4 tests — parked edit flow w/ customer+price_level persistence, stale parked DELETE 404 'Antrian tidak ditemukan', sale creation does not auto-delete parked, /pay payment_method+label iter-7 contract)"
+  ],
+  "success_rate": {
+    "backend": "100% (4/4 iter-8 new; 157/157 full regression serial run with -o addopts=)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Single module-scoped iter-8 owner iter8_<uuid> via POST /api/auth/register with TEST_Iter8 goods product (SKU ITER8-<hex>, Pcs base, prices default+grosir); per-test customers TEST_Iter8 Cust <hex> with price_level_id='grosir'; parked rows created+deleted inline (self-cleaning). All data scoped by business_id, idempotent across re-runs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for full 157-test regression. The `-o addopts=` flag REMAINS REQUIRED (iter-5 cross-worker pytest.sale_tx_id state coordination still breaks under default -n 2 --dist loadscope). iter-8 is FE-only — no server.py changes. If FE testing is requested next, focus on: (a) Debt payment modal confirms 'credit'/'Piutang' option is HIDDEN from the method chooser (user cannot pay a debt with another debt), (b) Receipt screen no longer shows 'Bagikan ke aplikasi lain' and 'Buat Invoke PDF A4' buttons, (c) Preview struk on web platform shows a graceful fallback instead of crashing (expo-print web guard), (d) Sale completion from a parked ticket does NOT surface 'Antrian tidak ditemukan' toast — consumedParkedRef must suppress double-DELETE, (e) Cart floating card shows camera icon that opens scanner and auto-adds the scanned SKU.",
+  "rca_of_issue": "N/A — pure forward-regression iteration. No backend endpoints changed in iter-8; all 4 contract-pin tests + 153 carried-over tests pass end-to-end against the preview URL."
+}

@@ -114,7 +114,9 @@ export default function DebtsScreen() {
   const paymentOptions: { kind: PaymentMethod; label: string }[] = [
     { kind: "cash", label: PAYMENT_LABELS.cash },
     { kind: "qris", label: PAYMENT_LABELS.qris },
-    ...methods.filter((m) => m.enabled !== false).map((m) => ({ kind: m.kind as PaymentMethod, label: m.label })),
+    ...methods
+      .filter((m) => m.enabled !== false && m.kind !== "credit")
+      .map((m) => ({ kind: m.kind as PaymentMethod, label: m.label })),
   ];
 
   return (

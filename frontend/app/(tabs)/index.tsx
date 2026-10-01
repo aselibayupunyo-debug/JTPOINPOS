@@ -2,8 +2,8 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Print from "expo-print";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, Promo, ReportSummary, Shift, syncMutation } from "@/src/api";
@@ -44,6 +44,7 @@ export default function KasirScreen() {
   const [parkName, setParkName] = useState("");
   const [unitPicker, setUnitPicker] = useState<null | { product: Product; options: { name: string; factor: number; price: number }[] }>(null);
   const [editingParkedId, setEditingParkedId] = useState<string | null>(null);
+  const consumedParkedRef = useRef<Set<string>>(new Set());
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
 
@@ -73,14 +74,16 @@ export default function KasirScreen() {
   // Resume parked transaction from params — only once per parked id
   useEffect(() => {
     if (!params.parked) return;
+    const parkedId = String(params.parked);
+    if (consumedParkedRef.current.has(parkedId)) return;
     if (products.length === 0) return; // wait for products to load
-    if (editingParkedId === params.parked) return; // already resumed
+    if (editingParkedId === parkedId) return; // already resumed
     (async () => {
       try {
         const list = await apiRequest<ParkedTransaction[]>("/parked");
-        const match = list.find((p) => p.id === params.parked);
+        const match = list.find((p) => p.id === parkedId);
+        consumedParkedRef.current.add(parkedId);
         if (!match) {
-          toast.error("Antrian tidak ditemukan", "Mungkin sudah selesai / dihapus.");
           router.replace("/(tabs)" as never);
           return;
         }
@@ -202,40 +205,13 @@ export default function KasirScreen() {
 
   const onBarcode = (data: string) => {
     setScanner(false);
-    setSearch(data);
     const match = products.find((p) => p.barcode === data || p.sku === data);
-    if (match) addToCart(match); else toast.info("Barcode belum terdaftar", data);
-  };
-
-  const printQueueTicket = async (parked: ParkedTransaction, s: BusinessSettings | null) => {
-    try {
-      const biz = s?.business_name || user?.business_name || "Toko";
-      const header = (s?.header_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
-      const items = parked.items.map((i) => `<tr><td>${i.name}${i.unit ? ` (${i.unit})` : ""}</td><td style="text-align:right">${i.quantity}</td></tr>`).join("");
-      const total = parked.items.reduce((a, b) => a + b.price * b.quantity, 0);
-      const html = `<!doctype html><html><head><meta charset="utf-8" /><style>
-        body { font-family: -apple-system, Arial, sans-serif; width: 58mm; padding: 6px; }
-        .center { text-align:center; }
-        .big { font-size: 44px; font-weight: 900; letter-spacing: 2px; margin: 10px 0; }
-        .biz { font-size: 14px; font-weight: 800; }
-        .meta { font-size: 10px; color: #333; }
-        table { width: 100%; border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin-top: 6px; }
-        td { font-size: 10px; padding: 1px 0; }
-        .footer { font-size: 10px; text-align: center; margin-top: 6px; }
-      </style></head><body>
-        <div class="center biz">${biz}</div>
-        <div class="center meta">${header}</div>
-        <div class="center meta">${new Date(parked.created_at).toLocaleString("id-ID")}</div>
-        <div class="center" style="font-size:11px;margin-top:8px">NOMOR ANTRIAN</div>
-        <div class="center big">${(parked.label || parked.customer_name).slice(0, 20)}</div>
-        <div class="center meta">Atas nama: <b>${parked.customer_name}</b></div>
-        <table><tbody>${items}</tbody></table>
-        <div class="meta" style="text-align:right;margin-top:4px">Perkiraan: ${formatRupiah(total)}</div>
-        <div class="footer">Simpan struk ini untuk melanjutkan transaksi.</div>
-      </body></html>`;
-      await Print.printAsync({ html });
-    } catch (e) {
-      toast.error("Cetak gagal", e instanceof Error ? e.message : undefined);
+    if (match) {
+      addToCart(match);
+      toast.success("Barcode terdeteksi", match.name);
+    } else {
+      setSearch(data);
+      toast.info("Barcode belum terdaftar", data);
     }
   };
 
@@ -259,18 +235,16 @@ export default function KasirScreen() {
         discount_percent: 0, discount_amount: 0, tax_percent: 0, shipping: 0,
       };
       const parked = await apiRequest<ParkedTransaction>("/parked", { method: "POST", body: JSON.stringify(payload) });
-      toast.success("Transaksi diparkir", `${name} · ${formatRupiah(totalPark)}`);
+      // delete old parked silently if editing (and we got a different id back)
       if (editingParkedId && editingParkedId !== parked.id) {
-        try { await apiRequest(`/parked/${editingParkedId}`, { method: "DELETE" }); } catch { /* ignore */ }
+        try { await apiRequest(`/parked/${editingParkedId}`, { method: "DELETE" }); } catch { /* already deleted */ }
+        consumedParkedRef.current.add(editingParkedId);
       }
       setEditingParkedId(null);
       setCart([]); setCustomer(null);
-      setParkedCount((n) => n + 1);
+      setParkedCount((n) => n + (editingParkedId ? 0 : 1));
       setParkPromptOpen(false);
-      Alert.alert("Cetak struk antrian?", `Antrian atas nama ${name}.`, [
-        { text: "Nanti saja", style: "cancel" },
-        { text: "Cetak sekarang", onPress: () => printQueueTicket(parked, settings) },
-      ]);
+      toast.success("Transaksi diparkir", `${name} · ${formatRupiah(totalPark)}`);
     } catch (e) {
       toast.error("Gagal park", e instanceof Error ? e.message : undefined);
     }
@@ -383,6 +357,9 @@ export default function KasirScreen() {
               <Text style={{ color: colors.onSurfaceInverse, fontSize: 18, fontWeight: "800", marginTop: 3 }}>{formatRupiah(totalCart)}</Text>
               {appliedPromoNames.length > 0 ? <Text style={{ color: colors.onBrandPrimary, fontSize: 11, fontWeight: "800", marginTop: 2 }}>🎁 {appliedPromoNames.join(" · ")}</Text> : null}
             </View>
+            <Pressable testID="cart-scan-button" onPress={openScanner} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.onSurfaceInverse, alignItems: "center", justifyContent: "center", marginRight: 8 }}>
+              <Ionicons name="scan-outline" size={22} color={colors.surfaceInverse} />
+            </Pressable>
             <Pressable testID="checkout-button" onPress={() => setCheckout(true)} style={styles.primaryButton}>
               <Text style={styles.primaryButtonText}>Bayar</Text>
             </Pressable>
@@ -549,8 +526,11 @@ export default function KasirScreen() {
             }
             setCart([]); setCustomer(null); setCheckout(false);
             if (editingParkedId) {
-              try { await apiRequest(`/parked/${editingParkedId}`, { method: "DELETE" }); } catch { /* ignore */ }
+              try { await apiRequest(`/parked/${editingParkedId}`, { method: "DELETE" }); } catch { /* already deleted */ }
+              // mark consumed so the resume effect doesn't retrigger when the URL param lingers
+              consumedParkedRef.current.add(editingParkedId);
               setEditingParkedId(null);
+              setParkedCount((n) => Math.max(0, n - 1));
             }
             await load();
             const txId = (result.data as { id?: string } | null)?.id;
@@ -776,6 +756,11 @@ function CheckoutSheet({
               disabled={busy}
               onPress={async () => {
                 try {
+                  if (Platform.OS === "web") {
+                    toast.error("Preview struk hanya di aplikasi mobile", "Buka di Expo Go / build Android untuk mencetak.");
+                    return;
+                  }
+                  if (cart.length === 0) { toast.error("Keranjang kosong"); return; }
                   const biz = settings?.business_name || "Toko";
                   const header = (settings?.header_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
                   const footer = (settings?.footer_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
@@ -811,7 +796,7 @@ function CheckoutSheet({
                   await Print.printAsync({ html });
                 } catch (e) {
                   const err = e instanceof Error ? e.message : "";
-                  if (err && !/cancel|dismiss/i.test(err)) toast.error(err);
+                  if (err && !/cancel|dismiss|did not complete/i.test(err)) toast.error("Preview gagal", err);
                 }
               }}
               style={[styles.outlineButton, { marginTop: 10 }, busy && { opacity: 0.5 }]}

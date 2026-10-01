@@ -3,8 +3,7 @@ import * as Linking from "expo-linking";
 import * as Sharing from "expo-sharing";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Platform, Pressable, ScrollView, Share, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, Share, Text, View } from "react-native";import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ViewShot, { captureRef } from "react-native-view-shot";
 
 import { apiRequest, BusinessSettings, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
@@ -173,12 +172,6 @@ export default function ReceiptScreen() {
           </Pressable>
           <Pressable testID="share-jpeg" onPress={shareAsImage} style={styles.outlineButton}>
             <Text style={styles.outlineText}>Kirim struk sebagai JPEG</Text>
-          </Pressable>
-          <Pressable testID="share-receipt" onPress={() => Share.share({ message })} style={styles.outlineButton}>
-            <Text style={styles.outlineText}>Bagikan ke aplikasi lain</Text>
-          </Pressable>
-          <Pressable testID="open-invoice" onPress={() => router.push({ pathname: "/invoice", params: { id: tx.id } })} style={styles.outlineButton}>
-            <Text style={styles.outlineText}>Buat Invoice PDF (A4)</Text>
           </Pressable>
           <View style={[styles.card, { marginTop: 8 }]}>
             <View style={styles.row}>
