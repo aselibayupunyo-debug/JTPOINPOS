@@ -5,14 +5,13 @@ import { useCallback, useState } from "react";
 import { ActivityIndicator, Image, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, CartItem, formatRupiah, IntegrationState, PAYMENT_LABELS, PaymentMethod, Product, ReportSummary } from "@/src/api";
+import { cachedGet, CartItem, Contact, formatRupiah, IntegrationState, PAYMENT_LABELS, PaymentMethod, Product, ReportSummary, syncMutation } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
+import { SyncBanner } from "@/src/components/sync-banner";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
-
-type IngestResult = { products: Product[]; report: ReportSummary; integrations: IntegrationState };
 
 export default function KasirScreen() {
   const styles = useAppStyles();
@@ -22,6 +21,7 @@ export default function KasirScreen() {
   const { user, can } = useAuth();
   const toast = useToast();
   const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Contact[]>([]);
   const [report, setReport] = useState<ReportSummary | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationState | null>(null);
   const [search, setSearch] = useState("");
@@ -34,15 +34,13 @@ export default function KasirScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [nextProducts, nextReport, nextIntegrations] = await Promise.all([
-        apiRequest<Product[]>("/products"),
-        apiRequest<ReportSummary>("/reports/summary"),
-        apiRequest<IntegrationState>("/integrations/status"),
+      const [p, c, r, i] = await Promise.all([
+        cachedGet<Product[]>("/products"),
+        cachedGet<Contact[]>("/customers"),
+        cachedGet<ReportSummary>("/reports/summary"),
+        cachedGet<IntegrationState>("/integrations/status"),
       ]);
-      const data: IngestResult = { products: nextProducts, report: nextReport, integrations: nextIntegrations };
-      setProducts(data.products);
-      setReport(data.report);
-      setIntegrations(data.integrations);
+      setProducts(p.data); setCustomers(c.data); setReport(r.data); setIntegrations(i.data);
     } catch (e) {
       toast.error("Gagal memuat data", e instanceof Error ? e.message : undefined);
     }
@@ -99,9 +97,10 @@ export default function KasirScreen() {
         <Header
           eyebrow={user?.business_name}
           title="Kasir"
-          subtitle={report ? `${report.transaction_count} transaksi hari ini · Saldo kas ${formatRupiah(report.cash_balance)}` : "Memuat data…"}
+          subtitle={report ? `${report.transaction_count} transaksi · Saldo kas ${formatRupiah(report.cash_balance)}` : "Memuat data…"}
           right={<View style={styles.avatar}><Text style={styles.avatarText}>{user?.name.slice(0, 1).toUpperCase()}</Text></View>}
         />
+        <SyncBanner />
         <View style={styles.row}>
           <TextInput testID="search-input" value={search} onChangeText={setSearch} placeholder="Cari nama / barcode / SKU" placeholderTextColor={colors.muted} style={styles.search} />
           <Pressable testID="scan-button" onPress={openScanner} style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.75 }]}>
@@ -189,26 +188,30 @@ export default function KasirScreen() {
         onClose={() => setCheckout(false)}
         cart={cart}
         total={totalCart}
+        customers={customers}
         changeQty={changeQty}
         qrisEnabled={integrations?.qris.configured ?? false}
-        onComplete={async (method, paid, customer, note) => {
+        onComplete={async (method, paid, customer, customer_id, note) => {
           try {
-            const tx = await apiRequest<{ id: string }>("/transactions", {
-              method: "POST",
-              body: JSON.stringify({
-                transaction_type: "sale",
-                payment_method: method,
-                paid_amount: paid,
-                customer_name: customer,
-                note,
-                items: cart.map((item) => ({ product_id: item.id, name: item.name, quantity: item.quantity, price: item.price, cost: item.cost, kitchen_print: !!item.kitchen_print })),
-              }),
+            const result = await syncMutation("POST", "/transactions", {
+              transaction_type: "sale",
+              payment_method: method,
+              paid_amount: paid,
+              customer_name: customer,
+              customer_id,
+              note,
+              items: cart.map((item) => ({ product_id: item.id, name: item.name, quantity: item.quantity, price: item.price, cost: item.cost, kitchen_print: !!item.kitchen_print })),
             });
-            toast.success("Transaksi berhasil", "Stok & laporan diperbarui.");
+            if (result.queued) {
+              toast.info("Transaksi disimpan offline", "Akan dikirim otomatis saat online.");
+            } else {
+              toast.success("Transaksi berhasil", "Stok & laporan diperbarui.");
+            }
             setCart([]);
             setCheckout(false);
             await load();
-            router.push({ pathname: "/receipt", params: { id: tx.id } });
+            const txId = (result.data as { id?: string } | null)?.id;
+            if (txId) router.push({ pathname: "/receipt", params: { id: txId } });
           } catch (e) {
             toast.error("Transaksi gagal", e instanceof Error ? e.message : undefined);
           }
@@ -219,21 +222,24 @@ export default function KasirScreen() {
 }
 
 function CheckoutSheet({
-  visible, onClose, cart, total, changeQty, qrisEnabled, onComplete,
+  visible, onClose, cart, total, customers, changeQty, qrisEnabled, onComplete,
 }: {
   visible: boolean;
   onClose: () => void;
   cart: CartItem[];
   total: number;
+  customers: Contact[];
   changeQty: (id: string, delta: number) => void;
   qrisEnabled: boolean;
-  onComplete: (method: PaymentMethod, paid: number, customer: string, note: string) => Promise<void>;
+  onComplete: (method: PaymentMethod, paid: number, customer: string, customer_id: string | null, note: string) => Promise<void>;
 }) {
   const styles = useAppStyles();
   const { colors } = useTheme();
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [paidText, setPaidText] = useState("");
-  const [customer, setCustomer] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [picker, setPicker] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const methods: PaymentMethod[] = ["cash", "credit", "bank", "wallet", "qris"];
@@ -298,31 +304,51 @@ function CheckoutSheet({
                 </View>
               </>
             ) : null}
-            {method === "credit" ? (
-              <>
-                <Text style={[styles.inputLabel, { marginTop: 15 }]}>Nama pelanggan</Text>
-                <TextInput testID="customer-input" value={customer} onChangeText={setCustomer} placeholder="Wajib untuk kredit" placeholderTextColor={colors.muted} style={styles.input} />
-              </>
-            ) : null}
+            <Text style={[styles.inputLabel, { marginTop: 15 }]}>Pelanggan</Text>
+            <View style={[styles.row, { gap: 10, marginBottom: 12 }]}>
+              <TextInput testID="customer-input" value={customerName} onChangeText={(t) => { setCustomerName(t); setCustomerId(null); }} placeholder={method === "credit" ? "Wajib untuk kredit" : "Umum / nama pelanggan"} placeholderTextColor={colors.muted} style={[styles.input, { flex: 1, marginBottom: 0 }]} />
+              <Pressable testID="pick-customer" onPress={() => setPicker(true)} style={styles.iconButton}><Ionicons name="people-outline" size={22} color={colors.brandPrimary} /></Pressable>
+            </View>
             <Text style={styles.inputLabel}>Catatan (opsional)</Text>
             <TextInput value={note} onChangeText={setNote} placeholder="Misal: diskon spesial" placeholderTextColor={colors.muted} style={styles.input} />
             <Pressable
               testID="confirm-pay"
-              disabled={busy || insufficient || (method === "credit" && !customer.trim())}
+              disabled={busy || insufficient || (method === "credit" && !customerName.trim())}
               onPress={async () => {
                 setBusy(true);
                 try {
-                  await onComplete(method, method === "cash" ? paidNumber : 0, customer.trim() || "Umum", note);
-                  setPaidText(""); setCustomer(""); setNote(""); setMethod("cash");
+                  await onComplete(method, method === "cash" ? paidNumber : 0, customerName.trim() || "Umum", customerId, note);
+                  setPaidText(""); setCustomerName(""); setCustomerId(null); setNote(""); setMethod("cash");
                 } finally { setBusy(false); }
               }}
-              style={[styles.primaryButton, { marginTop: 8 }, (busy || insufficient || (method === "credit" && !customer.trim())) && { opacity: 0.5 }]}
+              style={[styles.primaryButton, { marginTop: 8 }, (busy || insufficient || (method === "credit" && !customerName.trim())) && { opacity: 0.5 }]}
             >
               {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Selesaikan transaksi</Text>}
             </Pressable>
           </ScrollView>
         </View>
       </View>
+      <Modal visible={picker} transparent animationType="fade" onRequestClose={() => setPicker(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 18, maxHeight: "80%" }}>
+            <View style={styles.between}>
+              <Text style={styles.cardTitle}>Pilih pelanggan</Text>
+              <Pressable onPress={() => setPicker(false)}><Ionicons name="close" size={22} color={colors.onSurface} /></Pressable>
+            </View>
+            <ScrollView style={{ marginTop: 10 }}>
+              {customers.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada pelanggan. Tambahkan di menu Pelanggan.</Text> : customers.map((c) => (
+                <Pressable key={c.id} testID={`pick-customer-${c.id}`} onPress={() => { setCustomerName(c.name); setCustomerId(c.id); setPicker(false); }} style={styles.listRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.productName}>{c.name}</Text>
+                    <Text style={styles.muted}>{c.phone || "Tanpa nomor"}</Text>
+                  </View>
+                  <Text style={styles.muted}>{c.transaction_count ?? 0} tx</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 }

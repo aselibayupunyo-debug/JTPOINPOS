@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, formatRupiah, PAYMENT_LABELS, PaymentMethod, Product } from "@/src/api";
+import { apiRequest, Contact, formatRupiah, PAYMENT_LABELS, PaymentMethod, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -17,6 +17,8 @@ export default function PurchaseScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const [products, setProducts] = useState<Product[]>([]);
+  const [suppliers, setSuppliers] = useState<Contact[]>([]);
+  const [supplierId, setSupplierId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [method, setMethod] = useState<PaymentMethod>("cash");
@@ -24,8 +26,12 @@ export default function PurchaseScreen() {
   const [paidText, setPaidText] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [picker, setPicker] = useState(false);
 
-  useEffect(() => { apiRequest<Product[]>("/products").then(setProducts).catch(() => undefined); }, []);
+  useEffect(() => {
+    apiRequest<Product[]>("/products").then(setProducts).catch(() => undefined);
+    apiRequest<Contact[]>("/suppliers").then(setSuppliers).catch(() => undefined);
+  }, []);
   const filtered = products.filter((p) => `${p.name} ${p.barcode}`.toLowerCase().includes(search.toLowerCase())).slice(0, 20);
   const total = lines.reduce((s, l) => s + l.price * l.quantity, 0);
   const paid = Number(paidText.replace(/\D/g, "")) || 0;
@@ -49,6 +55,7 @@ export default function PurchaseScreen() {
           payment_method: method,
           paid_amount: method === "cash" ? total : paid,
           customer_name: supplier.trim() || "Supplier",
+          supplier_id: supplierId,
           note,
           items: lines.map((l) => ({ product_id: l.product_id, name: l.name, quantity: l.quantity, price: l.price, cost: l.cost })),
         }),
@@ -114,7 +121,10 @@ export default function PurchaseScreen() {
           ))}
         </View>
         <Text style={styles.inputLabel}>Nama supplier</Text>
-        <TextInput value={supplier} onChangeText={setSupplier} style={styles.input} placeholder={method === "credit" ? "Wajib untuk kredit" : "Opsional"} placeholderTextColor={colors.muted} />
+        <View style={[styles.row, { gap: 10, marginBottom: 12 }]}>
+          <TextInput value={supplier} onChangeText={(t) => { setSupplier(t); setSupplierId(null); }} style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder={method === "credit" ? "Wajib untuk kredit" : "Opsional"} placeholderTextColor={colors.muted} />
+          <Pressable testID="pick-supplier" onPress={() => setPicker(true)} style={styles.iconButton}><Ionicons name="briefcase-outline" size={22} color={colors.brandPrimary} /></Pressable>
+        </View>
         {method === "credit" ? (
           <>
             <Text style={styles.inputLabel}>Uang muka (opsional)</Text>
@@ -127,6 +137,27 @@ export default function PurchaseScreen() {
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Simpan pembelian</Text>}
         </Pressable>
       </ScrollView>
+      {picker ? (
+        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 18, maxHeight: "80%" }}>
+            <View style={styles.between}>
+              <Text style={styles.cardTitle}>Pilih supplier</Text>
+              <Pressable onPress={() => setPicker(false)}><Ionicons name="close" size={22} color={colors.onSurface} /></Pressable>
+            </View>
+            <ScrollView style={{ marginTop: 10 }}>
+              {suppliers.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada supplier. Tambahkan di menu Supplier.</Text> : suppliers.map((s) => (
+                <Pressable key={s.id} testID={`pick-supplier-${s.id}`} onPress={() => { setSupplier(s.name); setSupplierId(s.id); setPicker(false); }} style={styles.listRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.productName}>{s.name}</Text>
+                    <Text style={styles.muted}>{s.phone || "Tanpa nomor"}</Text>
+                  </View>
+                  <Text style={styles.muted}>{s.transaction_count ?? 0} tx</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      ) : null}
     </KeyboardAvoidingView>
   );
 }

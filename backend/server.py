@@ -86,6 +86,15 @@ class TransactionInput(BaseModel):
     items: List[TransactionItem] = Field(min_length=1)
     paid_amount: int = Field(default=0, ge=0)
     customer_name: str = "Umum"
+    customer_id: Optional[str] = None
+    supplier_id: Optional[str] = None
+    note: str = ""
+
+
+class ContactInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    phone: str = ""
+    address: str = ""
     note: str = ""
 
 
@@ -289,6 +298,7 @@ async def create_transaction(payload: TransactionInput, user: dict = Depends(cur
         "items": [item.model_dump() for item in payload.items], "total": total,
         "paid_amount": payload.paid_amount, "outstanding": outstanding,
         "customer_name": payload.customer_name.strip() or "Umum",
+        "customer_id": payload.customer_id, "supplier_id": payload.supplier_id,
         "note": payload.note, "created_at": now_iso(), "created_by": user["id"], "created_by_name": user["name"],
     }
     await db.transactions.insert_one(transaction)
@@ -488,10 +498,12 @@ async def report_summary(period: Literal["daily", "monthly", "yearly"] = "daily"
 # ---------- Backup / Import ----------
 @api_router.get("/backup")
 async def backup(user: dict = Depends(current_user)):
-    products_data = await db.products.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(10000)
-    transactions_data = await db.transactions.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(10000)
-    cash_data = await db.cash_entries.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(10000)
-    return {"exported_at": now_iso(), "business_name": user["business_name"], "products": products_data, "transactions": transactions_data, "cash_entries": cash_data}
+    products_data = await db.products.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
+    transactions_data = await db.transactions.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
+    cash_data = await db.cash_entries.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
+    customers_data = await db.customers.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
+    suppliers_data = await db.suppliers.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
+    return {"exported_at": now_iso(), "business_name": user["business_name"], "products": products_data, "transactions": transactions_data, "cash_entries": cash_data, "customers": customers_data, "suppliers": suppliers_data}
 
 
 @api_router.post("/products/import")
@@ -584,6 +596,179 @@ async def integrations_status(user: dict = Depends(current_user)):
         "whatsapp": {"configured": bool(os.getenv("META_ACCESS_TOKEN")), "label": "WhatsApp Cloud API"},
         "bluetooth_printing": {"configured": False, "label": "Printer Bluetooth / ESC-POS", "note": "Aktif pada build Android produksi"},
     }
+
+
+# ---------- Customers & Suppliers ----------
+async def _list_contacts(collection: str, user: dict, search: str = ""):
+    query: dict[str, Any] = {"business_id": user["business_id"]}
+    if search.strip():
+        query["$or"] = [
+            {"name": {"$regex": search.strip(), "$options": "i"}},
+            {"phone": {"$regex": search.strip(), "$options": "i"}},
+        ]
+    docs = await db[collection].find(query, {"_id": 0, "business_id": 0}).sort("name", 1).to_list(5000)
+    key_field = "customer_id" if collection == "customers" else "supplier_id"
+    tx_filter = "sale" if collection == "customers" else "purchase"
+    tx_docs = await db.transactions.find(
+        {"business_id": user["business_id"], "transaction_type": tx_filter, key_field: {"$in": [d["id"] for d in docs]}},
+        {"_id": 0, key_field: 1, "total": 1, "outstanding": 1, "payment_method": 1},
+    ).to_list(50000)
+    stats: dict[str, dict[str, int]] = {}
+    for tx in tx_docs:
+        cid = tx.get(key_field)
+        if not cid:
+            continue
+        bucket = stats.setdefault(cid, {"count": 0, "spent": 0, "outstanding": 0})
+        bucket["count"] += 1
+        bucket["spent"] += tx.get("total", 0)
+        if tx.get("payment_method") == "credit":
+            bucket["outstanding"] += tx.get("outstanding", 0)
+    for d in docs:
+        s = stats.get(d["id"], {"count": 0, "spent": 0, "outstanding": 0})
+        d["transaction_count"] = s["count"]
+        d["total_spent"] = s["spent"]
+        d["outstanding"] = s["outstanding"]
+    return docs
+
+
+@api_router.get("/customers")
+async def list_customers(search: str = "", user: dict = Depends(current_user)):
+    return await _list_contacts("customers", user, search)
+
+
+@api_router.post("/customers")
+async def create_customer(payload: ContactInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "sales")
+    doc = {"id": str(uuid.uuid4()), "business_id": user["business_id"], **payload.model_dump(), "created_at": now_iso()}
+    await db.customers.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"business_id", "_id"}}
+
+
+@api_router.put("/customers/{customer_id}")
+async def update_customer(customer_id: str, payload: ContactInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "sales")
+    result = await db.customers.update_one(
+        {"id": customer_id, "business_id": user["business_id"]},
+        {"$set": {**payload.model_dump(), "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+    return await db.customers.find_one({"id": customer_id}, {"_id": 0, "business_id": 0})
+
+
+@api_router.delete("/customers/{customer_id}")
+async def delete_customer(customer_id: str, user: dict = Depends(current_user)):
+    ensure_permission(user, "sales")
+    result = await db.customers.delete_one({"id": customer_id, "business_id": user["business_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+    return {"ok": True}
+
+
+@api_router.get("/suppliers")
+async def list_suppliers(search: str = "", user: dict = Depends(current_user)):
+    return await _list_contacts("suppliers", user, search)
+
+
+@api_router.post("/suppliers")
+async def create_supplier(payload: ContactInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "purchases")
+    doc = {"id": str(uuid.uuid4()), "business_id": user["business_id"], **payload.model_dump(), "created_at": now_iso()}
+    await db.suppliers.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"business_id", "_id"}}
+
+
+@api_router.put("/suppliers/{supplier_id}")
+async def update_supplier(supplier_id: str, payload: ContactInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "purchases")
+    result = await db.suppliers.update_one(
+        {"id": supplier_id, "business_id": user["business_id"]},
+        {"$set": {**payload.model_dump(), "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
+    return await db.suppliers.find_one({"id": supplier_id}, {"_id": 0, "business_id": 0})
+
+
+@api_router.delete("/suppliers/{supplier_id}")
+async def delete_supplier(supplier_id: str, user: dict = Depends(current_user)):
+    ensure_permission(user, "purchases")
+    result = await db.suppliers.delete_one({"id": supplier_id, "business_id": user["business_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
+    return {"ok": True}
+
+
+# ---------- Detailed Reports ----------
+def _period_start(period: str) -> datetime:
+    now = datetime.now(timezone.utc)
+    if period == "daily":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "monthly":
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+@api_router.get("/reports/products")
+async def report_products(period: Literal["daily", "monthly", "yearly"] = "monthly", user: dict = Depends(current_user)):
+    ensure_permission(user, "reports")
+    start = _period_start(period)
+    sales = await db.transactions.find(
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}},
+        {"_id": 0, "items": 1},
+    ).to_list(10000)
+    buckets: dict[str, dict[str, Any]] = {}
+    for tx in sales:
+        for item in tx.get("items", []):
+            pid = item["product_id"]
+            b = buckets.setdefault(pid, {"product_id": pid, "name": item["name"], "quantity": 0, "revenue": 0, "profit": 0})
+            b["quantity"] += item["quantity"]
+            b["revenue"] += item["price"] * item["quantity"]
+            b["profit"] += (item["price"] - item.get("cost", 0)) * item["quantity"]
+    rows = sorted(buckets.values(), key=lambda r: r["profit"], reverse=True)
+    return {"period": period, "rows": rows}
+
+
+@api_router.get("/reports/customers")
+async def report_customers(period: Literal["daily", "monthly", "yearly"] = "monthly", user: dict = Depends(current_user)):
+    ensure_permission(user, "reports")
+    start = _period_start(period)
+    sales = await db.transactions.find(
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}},
+        {"_id": 0, "customer_id": 1, "customer_name": 1, "total": 1, "outstanding": 1, "payment_method": 1, "items": 1},
+    ).to_list(50000)
+    buckets: dict[str, dict[str, Any]] = {}
+    for tx in sales:
+        key = tx.get("customer_id") or f"name:{tx.get('customer_name', 'Umum')}"
+        b = buckets.setdefault(key, {"customer_id": tx.get("customer_id"), "customer_name": tx.get("customer_name", "Umum"), "transaction_count": 0, "total_spent": 0, "outstanding": 0, "profit": 0})
+        b["transaction_count"] += 1
+        b["total_spent"] += tx.get("total", 0)
+        if tx.get("payment_method") == "credit":
+            b["outstanding"] += tx.get("outstanding", 0)
+        for item in tx.get("items", []):
+            b["profit"] += (item["price"] - item.get("cost", 0)) * item["quantity"]
+    rows = sorted(buckets.values(), key=lambda r: r["total_spent"], reverse=True)
+    return {"period": period, "rows": rows}
+
+
+@api_router.get("/reports/operators")
+async def report_operators(period: Literal["daily", "monthly", "yearly"] = "monthly", user: dict = Depends(current_user)):
+    ensure_permission(user, "reports")
+    start = _period_start(period)
+    docs = await db.transactions.find(
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}},
+        {"_id": 0, "created_by": 1, "created_by_name": 1, "total": 1, "items": 1},
+    ).to_list(50000)
+    buckets: dict[str, dict[str, Any]] = {}
+    for tx in docs:
+        key = tx.get("created_by") or "-"
+        b = buckets.setdefault(key, {"operator_id": tx.get("created_by"), "name": tx.get("created_by_name", "-"), "transaction_count": 0, "total_sales": 0, "profit": 0})
+        b["transaction_count"] += 1
+        b["total_sales"] += tx.get("total", 0)
+        for item in tx.get("items", []):
+            b["profit"] += (item["price"] - item.get("cost", 0)) * item["quantity"]
+    rows = sorted(buckets.values(), key=lambda r: r["total_sales"], reverse=True)
+    return {"period": period, "rows": rows}
 
 
 app.include_router(api_router)

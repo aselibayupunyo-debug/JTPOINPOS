@@ -17,7 +17,11 @@
       "bundleIdentifier": "com.emergent.kasirandroidpro.ijd6qs"
     },
     "android": {
-      "permissions": ["CAMERA", "BLUETOOTH_SCAN", "BLUETOOTH_CONNECT"],
+      "permissions": [
+        "CAMERA",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
@@ -47,7 +51,8 @@
       "expo-document-picker",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true

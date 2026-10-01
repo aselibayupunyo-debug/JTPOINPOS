@@ -8,6 +8,7 @@ import { apiRequest, IntegrationState } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
+import { SyncBanner } from "@/src/components/sync-banner";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -32,8 +33,10 @@ export default function LainnyaScreen() {
     { icon: "return-up-back-outline", title: "Retur transaksi", detail: "Retur penjualan atau pembelian", path: "/returns", permission: "returns" },
     { icon: "wallet-outline", title: "Arus kas", detail: "Kas masuk, keluar, saldo berjalan", path: "/cashflow", permission: "cashflow" },
     { icon: "alert-circle-outline", title: "Hutang & Piutang", detail: "Lunasi dan lacak kredit berjalan", path: "/debts", permission: "debts" },
+    { icon: "people-outline", title: "Pelanggan", detail: "Database pelanggan & total transaksi", path: "/customers" },
+    { icon: "briefcase-outline", title: "Supplier", detail: "Database supplier & total pembelian", path: "/suppliers" },
     { icon: "receipt-outline", title: "Riwayat transaksi", detail: "Semua penjualan & pembelian", path: "/history" },
-    { icon: "people-outline", title: "Operator & kewenangan", detail: "Atur akses tim kasir", path: "/operators", ownerOnly: true },
+    { icon: "person-add-outline", title: "Operator & kewenangan", detail: "Atur akses tim kasir", path: "/operators", ownerOnly: true },
     { icon: "print-outline", title: "Pengaturan toko & struk", detail: "Logo, printer 58/80mm, WhatsApp", path: "/settings", permission: "settings" },
   ];
 
@@ -47,6 +50,7 @@ export default function LainnyaScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Header eyebrow={user?.business_name} title="Lainnya" subtitle="Operasional & pengaturan toko" />
+        <SyncBanner />
         <View style={styles.greenCard}>
           <Text style={styles.white}>Pusat kendali</Text>
           <Text style={styles.bigWhite}>{user?.business_name}</Text>

@@ -7,6 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider } from "@/src/auth-context";
+import { SyncProvider } from "@/src/sync-context";
 import { ToastProvider } from "@/src/toast";
 
 LogBox.ignoreAllLogs(true);
@@ -18,23 +19,28 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <KeyboardProvider>
             <ToastProvider>
-              <AuthProvider>
-                <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="login" />
-                  <Stack.Screen name="(tabs)" />
-                  <Stack.Screen name="product-form" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
-                  <Stack.Screen name="purchase" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
-                  <Stack.Screen name="returns" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
-                  <Stack.Screen name="cashflow" />
-                  <Stack.Screen name="debts" />
-                  <Stack.Screen name="operators" />
-                  <Stack.Screen name="operator-form" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
-                  <Stack.Screen name="history" />
-                  <Stack.Screen name="settings" />
-                  <Stack.Screen name="receipt" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
-                </Stack>
-              </AuthProvider>
+              <SyncProvider>
+                <AuthProvider>
+                  <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="login" />
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="product-form" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                    <Stack.Screen name="purchase" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                    <Stack.Screen name="returns" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                    <Stack.Screen name="cashflow" />
+                    <Stack.Screen name="debts" />
+                    <Stack.Screen name="operators" />
+                    <Stack.Screen name="operator-form" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                    <Stack.Screen name="customers" />
+                    <Stack.Screen name="contact-form" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                    <Stack.Screen name="suppliers" />
+                    <Stack.Screen name="history" />
+                    <Stack.Screen name="settings" />
+                    <Stack.Screen name="receipt" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                  </Stack>
+                </AuthProvider>
+              </SyncProvider>
             </ToastProvider>
           </KeyboardProvider>
         </SafeAreaProvider>

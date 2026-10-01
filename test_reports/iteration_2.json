@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 2 backend testing for KasirKu Pro new endpoints (customers, suppliers, detailed reports, extended backup). Added /app/backend/tests/test_contacts_reports.py with 18 focused tests covering: customer CRUD + search + stats fields + empty-name 422; supplier CRUD + stats fields; sale with customer_id (cash + credit) updating transaction_count/total_spent/outstanding; purchase with supplier_id updating supplier outstanding; GET /api/reports/products (quantity/revenue/profit per product, sorted by profit desc, profit = (price - cost) * quantity aggregated); GET /api/reports/customers (grouped by customer_id, includes profit); GET /api/reports/operators (grouped by created_by, created_by_name populated); permission enforcement - cashier role gets 403 on all three /api/reports/* endpoints; /api/backup now contains customers and suppliers arrays with no _id or business_id leaks. Result: 18/18 passed (100%). Full regression also re-run: 56/56 total passed. No ObjectId or business_id leaks observed anywhere. All profit/revenue/quantity math verified to the rupiah.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PUT /api/customers/{id} & PUT /api/suppliers/{id}",
+        "issue": "No permission check (ensure_permission) - any authenticated user with any role can mutate customers/suppliers. Operators endpoints and product endpoints enforce roles; customers/suppliers do not. Consider gating writes behind 'sales' or a new 'contacts' permission for consistency."
+      },
+      {
+        "endpoint": "GET /api/reports/customers",
+        "issue": "When transactions have null customer_id, rows are grouped by 'name:<customer_name>' key but the returned row still has customer_id=None. Frontend will need to treat null customer_id as a non-linked walk-in bucket. Not a bug per spec, flagging for UI contract clarity."
+      },
+      {
+        "endpoint": "GET /api/reports/operators",
+        "issue": "Only aggregates 'sale' transactions. Spec is ambiguous but if operators perform purchases/returns those are not counted toward their activity. Consider documenting or extending if desired."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_contacts_reports.py",
+    "/app/backend/tests/test_backend_full.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/iteration2_results.xml",
+    "/app/test_reports/pytest/iteration2_full.xml"
+  ],
+  "action_items": [
+    "(Optional) Add ensure_permission(user, 'sales' or 'purchases' or new 'contacts') to POST/PUT/DELETE /api/customers and /api/suppliers for consistency with other write endpoints.",
+    "(Carried over from iteration 1) Make OperatorInput.password Optional[str] so PUT /api/operators/{id} can keep existing password without a dummy value.",
+    "(Carried over) Consider splitting server.py (now 785 lines, exceeds 700-line soft limit) into routers: auth, products, transactions, cash, contacts, operators, reports, settings."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from 604 to 785 lines in this iteration - above the 700-line soft limit. Splitting into feature routers would help maintainability.",
+    "_list_contacts aggregates stats in Python by fetching all matching transactions - fine for small shops but a MongoDB aggregation pipeline ($lookup/$group) would scale better and avoid two round-trips.",
+    "Reports endpoints also do in-memory aggregation; same note as above. Still acceptable for MVP.",
+    "No validation that customer_id/supplier_id in TransactionInput actually belong to the caller's business_id. A client could send any UUID and the stat aggregation would silently ignore unmatched ids, but it does mean the transaction will have an orphan link stored. Consider a lookup check or ignore silently - current behavior is safe but worth noting.",
+    "Soft-delete inconsistency from iter1 still present: DELETE /api/products writes deleted_at then immediately hard-deletes."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_contacts_reports.py (new, 18 tests under single class for loadscope-safe parallel execution)"
+  ],
+  "success_rate": {"backend": "100% (18/18 iteration-2 tests, 56/56 full regression)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Each test module registers a fresh owner (seedtest_<uuid>) and a scoped cashier operator. One TEST_Kopi product, one TEST_Pelanggan customer, one TEST_Supplier supplier, plus 3 transactions (2 sales + 1 purchase) are created per run. All data uses TEST_ prefixes and unique random usernames so re-runs are isolated. No seeded production data touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/ -v` from /app with EXPO_BACKEND_URL (or EXPO_PUBLIC_BACKEND_URL) set. pytest.ini forces `-n 2 --dist loadscope` which groups by CLASS; cross-class state via pytest.<attr> will NOT survive. Keep stateful flows inside a single TestClass (see TestContactsAndReports pattern). All iter-1 (test_backend_full.py) + iter-2 (test_contacts_reports.py) + public_api regression tests are green (56/56).",
+  "rca_of_issue": "N/A - all tests passed on first logical pass. Only mechanical hiccup: initial draft split tests across multiple classes; pytest.ini-enforced `--dist loadscope` sent each class to a different worker, breaking shared pytest.cust_id / pytest.sup_id attributes. Consolidating into one TestContactsAndReports class fixed it. Documented in test file header for future agents."
+}

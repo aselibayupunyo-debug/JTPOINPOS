@@ -1,4 +1,6 @@
 import Constants from "expo-constants";
+
+import { cacheGet, cacheSet, dequeue, enqueue, listQueue, markQueueError, queueCount } from "@/src/local-db";
 import { storage } from "@/src/utils/storage";
 
 const baseUrl = String(
@@ -48,6 +50,8 @@ export type TransactionDoc = {
   paid_amount: number;
   outstanding: number;
   customer_name: string;
+  customer_id?: string | null;
+  supplier_id?: string | null;
   note: string;
   created_at: string;
   created_by_name?: string;
@@ -71,6 +75,17 @@ export type Operator = {
   permissions?: Permission[];
 };
 
+export type Contact = {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  note: string;
+  transaction_count?: number;
+  total_spent?: number;
+  outstanding?: number;
+};
+
 export type ReportSummary = {
   period: "daily" | "monthly" | "yearly";
   sales_total: number;
@@ -84,6 +99,10 @@ export type ReportSummary = {
   cash_in: number;
   cash_out: number;
 };
+
+export type ProductReportRow = { product_id: string; name: string; quantity: number; revenue: number; profit: number };
+export type CustomerReportRow = { customer_id: string | null; customer_name: string; transaction_count: number; total_spent: number; outstanding: number; profit: number };
+export type OperatorReportRow = { operator_id: string | null; name: string; transaction_count: number; total_sales: number; profit: number };
 
 export type IntegrationState = {
   qris: { configured: boolean };
@@ -101,47 +120,96 @@ export type BusinessSettings = {
   whatsapp_number?: string;
 };
 
-export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+export class OfflineError extends Error {
+  constructor(message = "Perangkat sedang offline") { super(message); this.name = "OfflineError"; }
+}
+
+async function rawFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${baseUrl}/api${path}`, { ...options, headers });
+  return fetch(`${baseUrl}/api${path}`, { ...options, headers });
+}
+
+export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await rawFetch(path, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.detail ?? "Terjadi kesalahan koneksi");
   return body as T;
 }
 
+/** GET with cache-first on offline failure. Writes successful responses to local SQLite cache. */
+export async function cachedGet<T>(path: string): Promise<{ data: T; fromCache: boolean }> {
+  try {
+    const data = await apiRequest<T>(path);
+    await cacheSet(`get:${path}`, data);
+    return { data, fromCache: false };
+  } catch (e) {
+    const cached = await cacheGet<T>(`get:${path}`);
+    if (cached !== null) return { data: cached, fromCache: true };
+    throw e;
+  }
+}
+
+/** POST/PUT/DELETE that falls back to local offline queue when network fails. */
+export async function syncMutation(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<{ data: unknown | null; queued: boolean }> {
+  const payload = body === undefined ? null : JSON.stringify(body);
+  try {
+    const res = await rawFetch(path, { method, body: payload ?? undefined });
+    const parsed = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(parsed.detail ?? "Permintaan ditolak server");
+    return { data: parsed, queued: false };
+  } catch (e) {
+    const isNetwork = e instanceof TypeError || (e instanceof Error && /network/i.test(e.message));
+    if (!isNetwork) throw e;
+    await enqueue({ method, path, body: payload });
+    return { data: null, queued: true };
+  }
+}
+
+export async function flushQueue(): Promise<{ sent: number; failed: number }> {
+  const ops = await listQueue();
+  let sent = 0;
+  let failed = 0;
+  for (const op of ops) {
+    try {
+      const res = await rawFetch(op.path, { method: op.method, body: op.body ?? undefined });
+      if (!res.ok && res.status !== 404 && res.status !== 409) throw new Error(await res.text());
+      await dequeue(op.id);
+      sent += 1;
+    } catch (err) {
+      failed += 1;
+      await markQueueError(op.id, err instanceof Error ? err.message : "Unknown error");
+      break;
+    }
+  }
+  return { sent, failed };
+}
+
+export async function pendingSyncCount(): Promise<number> { return queueCount(); }
+
 export async function login(username: string, password: string) {
   return apiRequest<{ token: string; user: User }>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
+    method: "POST", body: JSON.stringify({ username, password }),
   });
 }
 
 export async function register(payload: { business_name: string; owner_name: string; username: string; password: string }) {
   return apiRequest<{ token: string; user: User }>("/auth/register", {
-    method: "POST",
-    body: JSON.stringify(payload),
+    method: "POST", body: JSON.stringify(payload),
   });
 }
 
-export async function saveToken(token: string) {
-  return storage.secureSet(TOKEN_KEY, token);
-}
-
-export async function clearToken() {
-  return storage.secureRemove(TOKEN_KEY);
-}
+export async function saveToken(token: string) { return storage.secureSet(TOKEN_KEY, token); }
+export async function clearToken() { return storage.secureRemove(TOKEN_KEY); }
 
 export async function uploadProducts(file: { uri: string; name: string; mimeType?: string | null }) {
   const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
   const form = new FormData();
   form.append("file", { uri: file.uri, name: file.name, type: file.mimeType ?? "application/octet-stream" } as unknown as Blob);
   const response = await fetch(`${baseUrl}/api/products/import`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
+    method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: form,
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.detail ?? "Import gagal");
