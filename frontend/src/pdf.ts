@@ -24,11 +24,12 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
   const customerBlock = tx.customer_name ? `
     <div><div class="label">Pelanggan</div><div class="value">${esc(tx.customer_name)}</div></div>` : "";
   const logoHtml = settings.logo_base64 ? `<img src="data:image/jpeg;base64,${settings.logo_base64}" class="logo" />` : "";
-  return `<!doctype html><html><head><meta charset="utf-8" />
+  return `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   @page { size: A5 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #111; margin: 0; padding: 12px; width: 148mm; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #111; padding: 14px; max-width: 100%; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f8043; padding-bottom: 10px; margin-bottom: 14px; }
   .brand { max-width: 55%; }
   .logo { width: 48px; height: 48px; object-fit: contain; margin-bottom: 4px; border-radius: 8px; }
@@ -39,15 +40,18 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
   .meta .value { font-weight: 700; margin-bottom: 2px; font-size: 11px; }
   .section { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; }
   table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10px; }
-  th { text-align: left; background: #0f8043; color: #fff; padding: 5px; font-weight: 700; font-size: 9px; letter-spacing: 0.3px; }
-  td { padding: 5px; border-bottom: 1px solid #e4e4e7; font-size: 10px; }
+  th { text-align: left; background: #0f8043; color: #fff; padding: 6px 5px; font-weight: 700; font-size: 10px; letter-spacing: 0.3px; }
+  td { padding: 6px 5px; border-bottom: 1px solid #e4e4e7; font-size: 10px; }
   .num { text-align: right; white-space: nowrap; }
-  .totals { margin-top: 10px; margin-left: auto; width: 55%; font-size: 11px; }
+  .totals { margin-top: 10px; margin-left: auto; width: 60%; font-size: 11px; }
   .totals .row { display: flex; justify-content: space-between; padding: 3px 0; }
   .totals .grand { border-top: 2px solid #0f8043; margin-top: 6px; padding-top: 6px; font-size: 14px; font-weight: 800; color: #0f8043; }
   .footer { margin-top: 18px; font-size: 9px; color: #666; border-top: 1px dashed #ccc; padding-top: 8px; text-align: center; }
   .muted { color: #888; font-size: 9px; }
-  .label-small { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 0.5px; }
+  @media print {
+    body { padding: 0; }
+    .header { padding-bottom: 8px; margin-bottom: 10px; }
+  }
 </style></head>
 <body>
   <div class="header">
@@ -86,7 +90,8 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
 
 export async function generateInvoicePdf(tx: TransactionDoc, settings: BusinessSettings): Promise<string> {
   const html = buildInvoiceHtml(tx, settings);
-  const { uri } = await Print.printToFileAsync({ html, base64: false });
+  // Force A5 paper in points (1pt = 1/72 inch; A5 = 148×210mm ≈ 419.5×595.3pt)
+  const { uri } = await Print.printToFileAsync({ html, base64: false, width: 420, height: 595 });
   return uri;
 }
 

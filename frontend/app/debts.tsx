@@ -1,10 +1,11 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import * as Print from "expo-print";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Share, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, formatRupiah, TransactionDoc } from "@/src/api";
+import { apiRequest, BusinessSettings, formatRupiah, PAYMENT_LABELS, PaymentMethod, PaymentMethodDoc, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { Header } from "@/src/components/header";
 import { useTheme } from "@/src/theme";
@@ -22,13 +23,54 @@ export default function DebtsScreen() {
   const [active, setActive] = useState<TransactionDoc | null>(null);
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("cash");
+  const [methodLabel, setMethodLabel] = useState<string>(PAYMENT_LABELS.cash);
+  const [methods, setMethods] = useState<PaymentMethodDoc[]>([]);
+  const [settings, setSettings] = useState<BusinessSettings | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = async (k: Kind) => {
+  const load = useCallback(async (k: Kind) => {
     try { setData(await apiRequest<{ total: number; items: TransactionDoc[] }>(`/debts?kind=${k}`)); }
     catch (e) { toast.error("Gagal memuat", e instanceof Error ? e.message : undefined); }
+  }, [toast]);
+  useEffect(() => { load(kind); }, [kind, load]);
+  useEffect(() => {
+    apiRequest<PaymentMethodDoc[]>("/payment-methods").then(setMethods).catch(() => undefined);
+    apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined);
+  }, []);
+
+  const buildReceiptHtml = (tx: TransactionDoc, paidAmount: number, paymentLabel: string, remaining: number): string => {
+    const biz = settings?.business_name ?? "Toko";
+    const header = (settings?.header_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
+    const footer = (settings?.footer_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
+    const title = kind === "receivable" ? "TANDA TERIMA PIUTANG" : "BUKTI BAYAR HUTANG";
+    return `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><style>
+      body { font-family: -apple-system, Arial, sans-serif; width: 58mm; padding: 6px; margin: 0; }
+      .center { text-align:center; }
+      .biz { font-size: 14px; font-weight: 800; }
+      .title { font-size: 12px; font-weight: 900; margin-top: 6px; letter-spacing: 0.6px; }
+      .meta { font-size: 10px; color: #333; }
+      .sep { border-top: 1px dashed #000; margin: 8px 0; }
+      .row { display: flex; justify-content: space-between; font-size: 10px; margin: 3px 0; }
+      .total { font-size: 13px; font-weight: 900; }
+      .footer { font-size: 9px; text-align: center; margin-top: 10px; color: #555; }
+    </style></head><body>
+      <div class="center biz">${biz}</div>
+      <div class="center meta">${header}</div>
+      <div class="center title">${title}</div>
+      <div class="sep"></div>
+      <div class="row"><span>Invoice</span><span>${tx.invoice_no}</span></div>
+      <div class="row"><span>Tanggal</span><span>${new Date().toLocaleString("id-ID")}</span></div>
+      <div class="row"><span>${kind === "receivable" ? "Pelanggan" : "Supplier"}</span><span>${tx.customer_name}</span></div>
+      <div class="row"><span>Total Transaksi</span><span>${formatRupiah(tx.total)}</span></div>
+      <div class="row"><span>Metode</span><span>${paymentLabel}</span></div>
+      <div class="sep"></div>
+      <div class="row total"><span>DIBAYAR</span><span>${formatRupiah(paidAmount)}</span></div>
+      <div class="row"><span>Sisa</span><span>${formatRupiah(remaining)}</span></div>
+      <div class="sep"></div>
+      <div class="footer">${footer || "Terima kasih"}</div>
+    </body></html>`;
   };
-  useEffect(() => { load(kind); }, [kind]);
 
   const pay = async () => {
     if (!active) return;
@@ -36,13 +78,44 @@ export default function DebtsScreen() {
     if (!num) return toast.error("Nominal tidak valid");
     setBusy(true);
     try {
-      await apiRequest(`/transactions/${active.id}/pay`, { method: "POST", body: JSON.stringify({ amount: num, note }) });
-      toast.success("Pembayaran dicatat", `${formatRupiah(num)} untuk ${active.invoice_no}`);
+      const res = await apiRequest<{ outstanding: number; payment_id: string }>(`/transactions/${active.id}/pay`, {
+        method: "POST",
+        body: JSON.stringify({ amount: num, payment_method: method, payment_method_label: methodLabel, note }),
+      });
+      toast.success("Pembayaran dicatat", `${formatRupiah(num)} · ${methodLabel}`);
+      const txSnapshot = active;
+      const remaining = res.outstanding;
       setActive(null); setAmount(""); setNote("");
       await load(kind);
+      // Prompt to print receipt
+      Alert.alert("Cetak tanda terima?", `Pembayaran ${formatRupiah(num)} tercatat.`, [
+        { text: "Nanti", style: "cancel" },
+        {
+          text: "Cetak / Bagikan",
+          onPress: async () => {
+            try {
+              const html = buildReceiptHtml(txSnapshot, num, methodLabel, remaining);
+              await Print.printAsync({ html });
+            } catch (e) { toast.error("Cetak gagal", e instanceof Error ? e.message : undefined); }
+          },
+        },
+        {
+          text: "Kirim WA",
+          onPress: () => {
+            const msg = `*${kind === "receivable" ? "TANDA TERIMA PIUTANG" : "BUKTI BAYAR HUTANG"}*\n${settings?.business_name ?? ""}\nInvoice: ${txSnapshot.invoice_no}\nTanggal: ${new Date().toLocaleString("id-ID")}\n${kind === "receivable" ? "Pelanggan" : "Supplier"}: ${txSnapshot.customer_name}\nDibayar: *${formatRupiah(num)}* via ${methodLabel}\nSisa: ${formatRupiah(remaining)}\n\nTerima kasih.`;
+            Share.share({ message: msg });
+          },
+        },
+      ]);
     } catch (e) { toast.error("Gagal", e instanceof Error ? e.message : undefined); }
     finally { setBusy(false); }
   };
+
+  const paymentOptions: { kind: PaymentMethod; label: string }[] = [
+    { kind: "cash", label: PAYMENT_LABELS.cash },
+    { kind: "qris", label: PAYMENT_LABELS.qris },
+    ...methods.filter((m) => m.enabled !== false).map((m) => ({ kind: m.kind as PaymentMethod, label: m.label })),
+  ];
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -77,7 +150,7 @@ export default function DebtsScreen() {
               </View>
               <Text style={[styles.cardTitle, { color: colors.warning }]}>{formatRupiah(tx.outstanding)}</Text>
             </View>
-            <Pressable testID={`pay-${tx.id}`} onPress={() => { setActive(tx); setAmount(String(tx.outstanding)); }} style={[styles.primaryButton, { marginTop: 10 }]}>
+            <Pressable testID={`pay-${tx.id}`} onPress={() => { setActive(tx); setAmount(String(tx.outstanding)); setMethod("cash"); setMethodLabel(PAYMENT_LABELS.cash); }} style={[styles.primaryButton, { marginTop: 10 }]}>
               <Text style={styles.primaryButtonText}>Catat pembayaran</Text>
             </Pressable>
           </View>
@@ -85,23 +158,36 @@ export default function DebtsScreen() {
       </ScrollView>
       <Modal visible={!!active} transparent animationType="slide" onRequestClose={() => setActive(null)}>
         <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "flex-end" }}>
-          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20 }}>
+          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: insets.bottom + 20 }}>
             <View style={styles.between}>
               <Text style={[styles.title, { fontSize: 20 }]}>Pembayaran {kind === "receivable" ? "Piutang" : "Hutang"}</Text>
               <Pressable onPress={() => setActive(null)}><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>
             </View>
             {active ? (
-              <>
+              <ScrollView keyboardShouldPersistTaps="handled">
                 <Text style={[styles.muted, { marginVertical: 8 }]}>{active.customer_name} · {active.invoice_no}</Text>
                 <Text style={[styles.cardTitle, { color: colors.warning, marginBottom: 14 }]}>Sisa {formatRupiah(active.outstanding)}</Text>
                 <Text style={styles.inputLabel}>Nominal</Text>
-                <TextInput value={amount} onChangeText={setAmount} keyboardType="number-pad" style={styles.input} placeholderTextColor={colors.muted} />
+                <TextInput testID="pay-amount" value={amount} onChangeText={setAmount} keyboardType="number-pad" style={styles.input} placeholderTextColor={colors.muted} />
+                <Text style={styles.inputLabel}>Metode pembayaran</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                  {paymentOptions.map((opt, idx) => (
+                    <Pressable
+                      key={`${opt.kind}-${idx}`}
+                      testID={`pay-method-${opt.kind}`}
+                      onPress={() => { setMethod(opt.kind); setMethodLabel(opt.label); }}
+                      style={[{ paddingHorizontal: 14, minHeight: 44, borderRadius: 12, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }, method === opt.kind && { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]}
+                    >
+                      <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: "800" }}>{opt.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
                 <Text style={styles.inputLabel}>Catatan</Text>
                 <TextInput value={note} onChangeText={setNote} style={styles.input} placeholder="Opsional" placeholderTextColor={colors.muted} />
-                <Pressable disabled={busy} onPress={pay} style={[styles.primaryButton, busy && { opacity: 0.5 }]}>
-                  {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Simpan</Text>}
+                <Pressable testID="pay-submit" disabled={busy} onPress={pay} style={[styles.primaryButton, busy && { opacity: 0.5 }]}>
+                  {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Simpan & Cetak Tanda Terima</Text>}
                 </Pressable>
-              </>
+              </ScrollView>
             ) : null}
           </View>
         </View>

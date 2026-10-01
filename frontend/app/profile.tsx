@@ -17,6 +17,7 @@ export default function ProfileScreen() {
   const toast = useToast();
   const { user, refresh } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
+  const [username, setUsername] = useState(user?.username ?? "");
   const [currentPwd, setCurrentPwd] = useState("");
   const [newPwd, setNewPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
@@ -24,11 +25,20 @@ export default function ProfileScreen() {
 
   const save = async () => {
     if (!currentPwd) return toast.error("Masukkan password saat ini untuk verifikasi");
+    const nextUsername = username.trim().toLowerCase();
+    if (nextUsername && nextUsername !== (user?.username ?? "") && nextUsername.length < 3) {
+      return toast.error("Username minimal 3 karakter");
+    }
     if (newPwd && newPwd !== confirmPwd) return toast.error("Konfirmasi password tidak cocok");
     if (newPwd && newPwd.length < 6) return toast.error("Password baru minimal 6 karakter");
     setBusy(true);
     try {
-      await updateProfile({ name: name.trim(), current_password: currentPwd, new_password: newPwd || undefined });
+      await updateProfile({
+        name: name.trim(),
+        username: nextUsername && nextUsername !== (user?.username ?? "") ? nextUsername : undefined,
+        current_password: currentPwd,
+        new_password: newPwd || undefined,
+      });
       toast.success("Profil diperbarui");
       setCurrentPwd(""); setNewPwd(""); setConfirmPwd("");
       if (refresh) await refresh();
@@ -46,9 +56,12 @@ export default function ProfileScreen() {
         </View>
         <View style={[styles.card, { marginTop: 10 }]}>
           <Text style={styles.cardTitle}>Akun pemilik</Text>
-          <Text style={[styles.muted, { marginTop: 4 }]}>{user?.business_name} · {user?.username}</Text>
+          <Text style={[styles.muted, { marginTop: 4 }]}>{user?.business_name}</Text>
           <Text style={styles.inputLabel}>Nama tampilan</Text>
           <TextInput testID="profile-name" value={name} onChangeText={setName} style={styles.input} placeholder="Nama lengkap" placeholderTextColor={colors.muted} />
+          <Text style={styles.inputLabel}>Username / login</Text>
+          <TextInput testID="profile-username" value={username} onChangeText={setUsername} autoCapitalize="none" style={styles.input} placeholder="Minimal 3 karakter, tanpa spasi" placeholderTextColor={colors.muted} />
+          <Text style={styles.muted}>Dipakai saat login. Ubah dengan password admin.</Text>
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Ganti password</Text>

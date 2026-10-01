@@ -75,9 +75,6 @@ export default function HistoryScreen() {
               <Pressable testID={`reprint-${tx.id}`} onPress={() => router.push({ pathname: "/receipt", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 10 }]}>
                 <Text style={styles.outlineText}>Cetak ulang / Lihat struk</Text>
               </Pressable>
-              <Pressable testID={`invoice-${tx.id}`} onPress={() => router.push({ pathname: "/invoice", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 8 }]}>
-                <Text style={styles.outlineText}>Invoice PDF (A5)</Text>
-              </Pressable>
             </View>
           );
         })}

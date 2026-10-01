@@ -191,6 +191,8 @@ class OperatorInput(BaseModel):
 
 class DebtPaymentInput(BaseModel):
     amount: int = Field(gt=0)
+    payment_method: str = "cash"
+    payment_method_label: Optional[str] = None
     note: str = ""
 
 
@@ -448,13 +450,14 @@ async def get_transaction(transaction_id: str, user: dict = Depends(current_user
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=120)
+    username: Optional[str] = Field(default=None, min_length=3, max_length=40)
     current_password: str = Field(min_length=1)
     new_password: Optional[str] = Field(default=None, min_length=6, max_length=120)
 
 
 @api_router.put("/profile")
 async def update_profile(payload: ProfileUpdate, user: dict = Depends(current_user)):
-    """Update owner profile: name and/or password. Current password required."""
+    """Update owner profile: name, username, and/or password. Current password required."""
     me = await db.users.find_one({"id": user["id"]})
     if not me:
         raise HTTPException(status_code=404, detail="Akun tidak ditemukan")
@@ -463,12 +466,30 @@ async def update_profile(payload: ProfileUpdate, user: dict = Depends(current_us
     patch: dict[str, Any] = {}
     if payload.name and payload.name.strip():
         patch["name"] = payload.name.strip()
+    if payload.username and payload.username.strip() and payload.username.strip() != me.get("username"):
+        new_un = payload.username.strip().lower()
+        clash = await db.users.find_one({"username": new_un, "id": {"$ne": user["id"]}})
+        if clash:
+            raise HTTPException(status_code=400, detail="Username sudah digunakan")
+        patch["username"] = new_un
     if payload.new_password:
         patch["password_hash"] = bcrypt.hashpw(payload.new_password.encode(), bcrypt.gensalt()).decode()
     if not patch:
         return {"ok": True, "message": "Tidak ada perubahan"}
     await db.users.update_one({"id": user["id"]}, {"$set": patch})
     return {"ok": True}
+
+
+async def _write_audit(business_id: str, actor_id: str, actor_name: str, action: str, details: dict[str, Any] | None = None) -> None:
+    await db.audit_logs.insert_one({
+        "id": str(uuid.uuid4()),
+        "business_id": business_id,
+        "actor_id": actor_id,
+        "actor_name": actor_name,
+        "action": action,
+        "details": details or {},
+        "created_at": now_iso(),
+    })
 
 
 class AdminPasswordInput(BaseModel):
@@ -485,7 +506,7 @@ async def _require_owner_password(payload: AdminPasswordInput, user: dict) -> No
 
 @api_router.post("/admin/reset-transactions")
 async def admin_reset_transactions(payload: AdminPasswordInput, user: dict = Depends(current_user)):
-    """Dangerous: delete all transactions (sale/purchase/returns), parked, cashflow, shifts, debt payments.
+    """Dangerous: delete all transactions (sale/purchase/returns), parked, cashflow, shifts.
     Products, categories, customers, suppliers, settings tetap. Verified by owner password."""
     await _require_owner_password(payload, user)
     biz = user["business_id"]
@@ -495,6 +516,7 @@ async def admin_reset_transactions(payload: AdminPasswordInput, user: dict = Dep
         "cashflow": (await db.cash_entries.delete_many({"business_id": biz})).deleted_count,
         "shifts": (await db.shifts.delete_many({"business_id": biz})).deleted_count,
     }
+    await _write_audit(biz, user["id"], user["name"], "reset_transactions", results)
     return {"ok": True, "deleted": results}
 
 
@@ -504,7 +526,21 @@ async def admin_delete_all_products(payload: AdminPasswordInput, user: dict = De
     await _require_owner_password(payload, user)
     biz = user["business_id"]
     count = (await db.products.delete_many({"business_id": biz})).deleted_count
+    await _write_audit(biz, user["id"], user["name"], "delete_all_products", {"deleted": count})
     return {"ok": True, "deleted": count}
+
+
+@api_router.get("/audit-logs")
+async def list_audit_logs(limit: int = 100, user: dict = Depends(current_user)):
+    """Owner-only. Returns recent admin actions (reset, delete-all, role changes)."""
+    if user.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Hanya pemilik yang boleh melihat log audit")
+    docs = await db.audit_logs.find(
+        {"business_id": user["business_id"]},
+        {"_id": 0, "business_id": 0},
+    ).sort("created_at", -1).to_list(max(min(limit, 500), 1))
+    return docs
+
 
 
 
@@ -561,10 +597,20 @@ async def pay_debt(transaction_id: str, payload: DebtPaymentInput, user: dict = 
     if not doc:
         raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
     outstanding = max(doc.get("outstanding", 0) - payload.amount, 0)
+    payment_id = str(uuid.uuid4())
+    payment_entry = {
+        "id": payment_id,
+        "amount": payload.amount,
+        "payment_method": payload.payment_method,
+        "payment_method_label": payload.payment_method_label or payload.payment_method,
+        "note": payload.note,
+        "at": now_iso(),
+        "received_by": user["name"],
+    }
     await db.transactions.update_one(
         {"id": transaction_id, "business_id": user["business_id"]},
         {"$set": {"outstanding": outstanding, "updated_at": now_iso()},
-         "$push": {"payments": {"amount": payload.amount, "note": payload.note, "at": now_iso()}}},
+         "$push": {"payments": payment_entry}},
     )
     # also log cash entry
     entry_type = "income" if doc["transaction_type"] == "sale" else "expense"
@@ -572,10 +618,11 @@ async def pay_debt(transaction_id: str, payload: DebtPaymentInput, user: dict = 
         "id": str(uuid.uuid4()), "business_id": user["business_id"],
         "entry_type": entry_type, "amount": payload.amount,
         "category": "Pelunasan " + ("piutang" if entry_type == "income" else "hutang"),
-        "note": f"{doc['invoice_no']} · {payload.note}".strip(" ·"),
+        "payment_method": payload.payment_method,
+        "note": f"{doc['invoice_no']} · {payload.payment_method_label or payload.payment_method} · {payload.note}".strip(" ·"),
         "created_at": now_iso(),
     })
-    return {"outstanding": outstanding}
+    return {"outstanding": outstanding, "payment_id": payment_id, "payment": payment_entry}
 
 
 # ---------- Cash Entries ----------

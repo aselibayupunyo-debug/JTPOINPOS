@@ -70,29 +70,40 @@ export default function KasirScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // Resume parked transaction from params
+  // Resume parked transaction from params — only once per parked id
   useEffect(() => {
     if (!params.parked) return;
+    if (products.length === 0) return; // wait for products to load
+    if (editingParkedId === params.parked) return; // already resumed
     (async () => {
       try {
         const list = await apiRequest<ParkedTransaction[]>("/parked");
         const match = list.find((p) => p.id === params.parked);
-        if (!match) return;
+        if (!match) {
+          toast.error("Antrian tidak ditemukan", "Mungkin sudah selesai / dihapus.");
+          router.replace("/(tabs)" as never);
+          return;
+        }
         const resumed: CartItem[] = match.items.map((item) => {
           const prod = products.find((p) => p.id === item.product_id);
           if (!prod) return null;
           const unit = item.unit || prod.base_unit || "Pcs";
           return { ...prod, line_id: `${prod.id}:${unit}`, product_id: prod.id, quantity: item.quantity, unit, unit_factor: item.unit_factor ?? 1, discount: item.discount, price: item.price } as CartItem;
         }).filter(Boolean) as CartItem[];
+        if (resumed.length === 0 && match.items.length > 0) {
+          toast.error("Produk antrian hilang", "Beberapa produk sudah dihapus dari katalog. Buat ulang transaksi.");
+        }
         setCart(resumed);
         setPriceLevel(match.price_level_id || "default");
         if (match.customer_id) setCustomer(customers.find((c) => c.id === match.customer_id) ?? null);
         else if (match.customer_name) setCustomer({ id: "", name: match.customer_name, phone: "", address: "", note: "" } as Contact);
         setEditingParkedId(match.id);
         toast.info("Antrian dilanjutkan", `${match.customer_name} · dapat diedit`);
-      } catch { /* ignore */ }
+      } catch (e) {
+        toast.error("Gagal buka antrian", e instanceof Error ? e.message : undefined);
+      }
     })();
-  }, [params.parked, products, customers, toast]);
+  }, [params.parked, products, customers, editingParkedId, toast]);
 
   // Apply customer's default price level
   useEffect(() => {
@@ -573,6 +584,7 @@ function CheckoutSheet({
 }) {
   const styles = useAppStyles();
   const { colors } = useTheme();
+  const toast = useToast();
   const [method, setMethod] = useState<PaymentMethodDoc | null>(null);
   const [paidText, setPaidText] = useState("");
   const [customerName, setCustomerName] = useState("");
@@ -759,6 +771,53 @@ function CheckoutSheet({
                 <Text style={styles.dangerText}>Batal</Text>
               </Pressable>
             </View>
+            <Pressable
+              testID="preview-print-receipt"
+              disabled={busy}
+              onPress={async () => {
+                try {
+                  const biz = settings?.business_name || "Toko";
+                  const header = (settings?.header_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
+                  const footer = (settings?.footer_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
+                  const rows = cart.map((it) => `<tr><td>${it.name}${it.unit ? ` (${it.unit})` : ""}<br/><span style="font-size:9px;color:#555">${it.quantity} × ${formatRupiah(it.price)}</span></td><td style="text-align:right">${formatRupiah(it.price * it.quantity)}</td></tr>`).join("");
+                  const html = `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><style>
+                    body { font-family: -apple-system, Arial, sans-serif; width: 58mm; padding: 6px; margin: 0; }
+                    .center { text-align:center; }
+                    .biz { font-size: 14px; font-weight: 800; }
+                    .meta { font-size: 10px; color: #333; }
+                    .sep { border-top: 1px dashed #000; margin: 6px 0; }
+                    table { width: 100%; } td { font-size: 10px; padding: 2px 0; }
+                    .row { display: flex; justify-content: space-between; font-size: 10px; margin: 2px 0; }
+                    .total { font-size: 13px; font-weight: 900; margin-top: 4px; }
+                    .draft { color: #b00; font-weight: 900; letter-spacing: 2px; }
+                  </style></head><body>
+                    <div class="center biz">${biz}</div>
+                    <div class="center meta">${header}</div>
+                    <div class="center draft">** PREVIEW **</div>
+                    <div class="center meta">${new Date().toLocaleString("id-ID")}</div>
+                    <div class="center meta">Pelanggan: ${customerName.trim() || "Umum"}</div>
+                    <div class="sep"></div>
+                    <table><tbody>${rows}</tbody></table>
+                    <div class="sep"></div>
+                    ${globalDisc ? `<div class="row"><span>Diskon</span><span>-${formatRupiah(globalDisc)}</span></div>` : ""}
+                    ${taxAmt ? `<div class="row"><span>Pajak ${tPct}%</span><span>${formatRupiah(taxAmt)}</span></div>` : ""}
+                    ${shippingNum ? `<div class="row"><span>Ongkir</span><span>${formatRupiah(shippingNum)}</span></div>` : ""}
+                    <div class="row total"><span>TOTAL</span><span>${formatRupiah(grandTotal)}</span></div>
+                    <div class="row"><span>Metode</span><span>${method?.label || "-"}</span></div>
+                    <div class="sep"></div>
+                    <div class="center meta">${footer || "Terima kasih"}</div>
+                    <div class="center meta" style="margin-top:6px">* Struk preview, transaksi belum disimpan *</div>
+                  </body></html>`;
+                  await Print.printAsync({ html });
+                } catch (e) {
+                  const err = e instanceof Error ? e.message : "";
+                  if (err && !/cancel|dismiss/i.test(err)) toast.error(err);
+                }
+              }}
+              style={[styles.outlineButton, { marginTop: 10 }, busy && { opacity: 0.5 }]}
+            >
+              <Text style={styles.outlineText}>Preview / Cetak Struk</Text>
+            </Pressable>
             <Pressable
               testID="confirm-pay"
               disabled={busy || insufficient || !method || (kind === "credit" && !customerName.trim())}

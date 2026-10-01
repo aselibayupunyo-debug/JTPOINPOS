@@ -1,20 +1,20 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, Share, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, CustomerReportRow, formatRupiah, OperatorReportRow, ProductReportRow, ReportSummary, SalesItemRow } from "@/src/api";
+import { apiRequest, BusinessSettings, CustomerReportRow, formatRupiah, OperatorReportRow, PAYMENT_LABELS, ProductReportRow, ReportSummary, SalesItemRow, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { SyncBanner } from "@/src/components/sync-banner";
-import { shareReportPdf } from "@/src/pdf";
+import { shareInvoicePdf, shareReportPdf } from "@/src/pdf";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
 type Period = "daily" | "monthly" | "yearly";
-type Tab = "ringkasan" | "produk" | "pelanggan" | "operator" | "barang";
+type Tab = "ringkasan" | "produk" | "pelanggan" | "operator" | "barang" | "transaksi";
 
 export default function LaporanScreen() {
   const styles = useAppStyles();
@@ -29,24 +29,33 @@ export default function LaporanScreen() {
   const [customers, setCustomers] = useState<CustomerReportRow[]>([]);
   const [operators, setOperators] = useState<OperatorReportRow[]>([]);
   const [salesItems, setSalesItems] = useState<SalesItemRow[]>([]);
+  const [transactions, setTransactions] = useState<TransactionDoc[]>([]);
+  const [settings, setSettings] = useState<BusinessSettings | null>(null);
+  const [pdfBusy, setPdfBusy] = useState<string | null>(null);
   const [metricDetail, setMetricDetail] = useState<null | { title: string; rows: { label: string; value: string }[]; description?: string }>(null);
   const [operatorDetail, setOperatorDetail] = useState<null | { operator: OperatorReportRow; rows: SalesItemRow[] }>(null);
 
   const load = useCallback(async (p: Period) => {
     try {
-      const [s, pr, c, op, si] = await Promise.all([
+      const [s, pr, c, op, si, tx] = await Promise.all([
         apiRequest<ReportSummary>(`/reports/summary?period=${p}`),
         apiRequest<{ rows: ProductReportRow[] }>(`/reports/products?period=${p}`),
         apiRequest<{ rows: CustomerReportRow[] }>(`/reports/customers?period=${p}`),
         apiRequest<{ rows: OperatorReportRow[] }>(`/reports/operators?period=${p}`),
         apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?period=${p}`),
+        apiRequest<TransactionDoc[]>(`/transactions?kind=sale&limit=500`),
       ]);
       setReport(s); setProducts(pr.rows); setCustomers(c.rows); setOperators(op.rows); setSalesItems(si.rows);
+      // Filter transactions by period
+      const start = p === "daily" ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
+        : p === "monthly" ? new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+        : new Date(new Date().getFullYear(), 0, 1).toISOString();
+      setTransactions(tx.filter((t) => t.created_at >= start && t.status !== "cancelled"));
     } catch (e) { toast.error("Gagal memuat laporan", e instanceof Error ? e.message : undefined); }
   }, [toast]);
 
   useFocusEffect(useCallback(() => { load(period); }, [load, period]));
-  useEffect(() => { load(period); }, [period, load]);
+  useEffect(() => { load(period); apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined); }, [period, load]);
 
   if (!can("reports")) {
     return (
@@ -165,6 +174,24 @@ export default function LaporanScreen() {
             { label: "Total omzet", value: formatRupiah(salesItems.reduce((s, r) => s + r.subtotal, 0)) },
           ],
         }, biz);
+      } else if (tab === "transaksi") {
+        await shareReportPdf({
+          title: `Detail Transaksi Penjualan · ${periodLabel}`, subtitle: biz,
+          headers: ["Tanggal & Jam", "Invoice", "Pelanggan", "Operator", "Item", "Total", "Metode"],
+          rows: transactions.map((t) => [
+            new Date(t.created_at).toLocaleString("id-ID"),
+            t.invoice_no,
+            t.customer_name,
+            t.created_by_name ?? "-",
+            String(t.items.length),
+            formatRupiah(t.total),
+            t.payment_method_label || PAYMENT_LABELS[t.payment_method] || t.payment_method,
+          ]),
+          summary: [
+            { label: "Total transaksi", value: String(transactions.length) },
+            { label: "Total omzet", value: formatRupiah(transactions.reduce((s, t) => s + t.total, 0)) },
+          ],
+        }, biz);
       }
     } catch (e) { toast.error("Gagal membuat PDF", e instanceof Error ? e.message : undefined); }
   };
@@ -212,6 +239,7 @@ export default function LaporanScreen() {
             { key: "pelanggan", label: "Per Pelanggan" },
             { key: "operator", label: "Per Operator" },
             { key: "barang", label: "Detail Barang" },
+            { key: "transaksi", label: "Detail Transaksi" },
           ] as { key: Tab; label: string }[]).map((item) => (
             <Pressable key={item.key} testID={`report-tab-${item.key}`} onPress={() => setTab(item.key)} style={[styles.chip, tab === item.key && styles.chipActive]}>
               <Text style={[styles.chipText, tab === item.key && styles.chipTextActive]}>{item.label}</Text>
@@ -300,6 +328,70 @@ export default function LaporanScreen() {
                 <View style={{ alignItems: "flex-end" }}>
                   <Text style={styles.productName}>{r.quantity} × {formatRupiah(r.price)}</Text>
                   <Text style={[styles.muted, { color: colors.success }]}>{formatRupiah(r.subtotal)}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {tab === "transaksi" ? (
+          <View style={styles.card} testID="report-transaksi-list">
+            <Text style={styles.cardTitle}>Detail Transaksi Penjualan · {periodLabel}</Text>
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>{transactions.length} transaksi · total omzet {formatRupiah(transactions.reduce((s, t) => s + t.total, 0))}</Text>
+            {transactions.length === 0 ? <Text style={styles.muted}>Belum ada transaksi penjualan.</Text> : transactions.map((t) => (
+              <View key={t.id} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+                <View style={styles.between}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.productName}>{t.invoice_no}</Text>
+                    <Text style={styles.muted}>{new Date(t.created_at).toLocaleString("id-ID")}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>{t.customer_name} · oleh {t.created_by_name ?? "-"}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>{t.items.length} item · {t.payment_method_label || PAYMENT_LABELS[t.payment_method] || t.payment_method}</Text>
+                  </View>
+                  <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(t.total)}</Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <Pressable
+                    testID={`tx-pdf-${t.id}`}
+                    disabled={!settings || pdfBusy === t.id}
+                    onPress={async () => {
+                      if (!settings) return;
+                      setPdfBusy(t.id);
+                      try { await shareInvoicePdf(t, settings, "share"); }
+                      catch (e) { toast.error("Gagal PDF", e instanceof Error ? e.message : undefined); }
+                      finally { setPdfBusy(null); }
+                    }}
+                    style={[styles.outlineButton, { flex: 1 }, pdfBusy === t.id && { opacity: 0.5 }]}
+                  >
+                    {pdfBusy === t.id ? <ActivityIndicator color={colors.brandPrimary} /> : <Text style={styles.outlineText}>Bagikan PDF</Text>}
+                  </Pressable>
+                  <Pressable
+                    testID={`tx-wa-${t.id}`}
+                    disabled={!settings || pdfBusy === t.id}
+                    onPress={async () => {
+                      if (!settings) return;
+                      setPdfBusy(t.id);
+                      try { await shareInvoicePdf(t, settings, "whatsapp"); }
+                      catch (e) { toast.error("Gagal WA", e instanceof Error ? e.message : undefined); }
+                      finally { setPdfBusy(null); }
+                    }}
+                    style={[styles.outlineButton, { flex: 1 }, pdfBusy === t.id && { opacity: 0.5 }]}
+                  >
+                    <Text style={styles.outlineText}>Kirim WA</Text>
+                  </Pressable>
+                  <Pressable
+                    testID={`tx-email-${t.id}`}
+                    disabled={!settings || pdfBusy === t.id}
+                    onPress={async () => {
+                      if (!settings) return;
+                      setPdfBusy(t.id);
+                      try { await shareInvoicePdf(t, settings, "email"); }
+                      catch (e) { toast.error("Gagal email", e instanceof Error ? e.message : undefined); }
+                      finally { setPdfBusy(null); }
+                    }}
+                    style={[styles.outlineButton, { flex: 1 }, pdfBusy === t.id && { opacity: 0.5 }]}
+                  >
+                    <Text style={styles.outlineText}>Email</Text>
+                  </Pressable>
                 </View>
               </View>
             ))}

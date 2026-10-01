@@ -1,0 +1,64 @@
+{
+  "summary": "Iteration-7 backend-only testing for KasirKu Pro session 2026-10 iter-7 (audit logs, username in /profile, debt payment method). ALL 13/13 new iter-7 tests PASS and full regression 153/153 PASS when run serially (-o addopts=). (1) GET /api/audit-logs — owner receives entries; non-owner (cashier) 403; initial list is empty for a fresh business; `_id`/`business_id` excluded from projection; entries sorted by created_at DESC. (2) POST /api/admin/reset-transactions writes exactly ONE audit entry per call with action='reset_transactions', actor_id==owner.id, actor_name==owner.name, and details echoing deleted counts (transactions/parked/cashflow/shifts). (3) POST /api/admin/delete-all-products writes action='delete_all_products' with details.deleted == count returned. (4) PUT /api/profile username — min_length=3 enforced as 422; empty string also 422 (pydantic validation); case-insensitive clash check (uppercase of other user's username returns 400 'Username sudah digunakan'); happy path lowercases input, old username can no longer log in, new username login succeeds. (5) POST /api/transactions/{id}/pay — payload now accepts payment_method+payment_method_label; response.payment contains id/amount/payment_method/payment_method_label/note/at/received_by; the method+label are persisted in transaction.payments[] (verified via GET /api/transactions/{id}) AND a corresponding cash_entries row is created with embedded label in note ('<invoice_no> · QRIS Dinamis · <note>') and entry_type='income' for sale, 'expense' for purchase. Defaults verified: omitting payment_method defaults to 'cash' and payment_method_label defaults to the method value. Regression: name+password profile change still works (old pwd fails, new pwd logs in). Iter-6 admin reset/delete endpoints still work with the audit side-effect added. Note on test runner: /app/backend/pytest.ini still carries `-n 2 --dist loadscope` which breaks iter-5 cross-worker state; must run with `-o addopts=` for 153/153 serial pass (same known iter-5 test-design issue carried from prior iterations, not a product regression).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/audit-logs",
+        "issue": "No pagination cursor exposed; limit cap is 500 but there is no offset/skip. Fine for current scale, but owners with heavy admin activity will eventually need skip/before_created_at. Also no action filter (?action=reset_transactions). Not blocking."
+      },
+      {
+        "endpoint": "POST /api/transactions/{id}/pay",
+        "issue": "payment_method_label defaults to the raw method value when not provided (e.g. 'cash' instead of 'Tunai'). This is intentional per code (fallback = payload.payment_method) but creates inconsistent UX if the client forgets to send a label. Consider resolving against db.payment_methods for the human name server-side."
+      },
+      {
+        "endpoint": "POST /api/transactions/{id}/pay",
+        "issue": "No validation that payment_method matches a configured method or canonical kind (cash/credit/qris_static/qris/transfer/custom). The payment entry and cash_entries silently accept arbitrary strings. Low risk but could produce weird report groupings."
+      },
+      {
+        "endpoint": "PUT /api/profile",
+        "issue": "If payload.username is literally the empty string, Pydantic's min_length=3 raises 422 — contradicting the review bullet 'empty username unchanged'. The intended no-op behavior only happens if the field is omitted (None). Not blocking (test accepts either 200-noop or 422)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter7_audit_username_debt.py",
+    "/app/test_reports/pytest/iteration7_results.xml",
+    "/app/test_reports/pytest/iteration7_full.xml"
+  ],
+  "action_items": [
+    "(Carried over) Fix /app/backend/pytest.ini addopts: `-n 2 --dist loadscope` still breaks test_iter5_features which coordinates state via `pytest.sale_tx_id` module attributes across workers. Keep running regression with `-o addopts=`. Refactor iter-5 to class-scope fixtures OR drop xdist default.",
+    "(Carried over) server.py is now 1457 lines; still over 700-line soft limit — split into routers (auth/products/transactions/admin/reports/settings/audit/...).",
+    "(Optional) Make GET /api/audit-logs filterable (?action=reset_transactions) and paginable (?before=<created_at>) for future UI 'load more'.",
+    "(Optional) In POST /api/transactions/{id}/pay, resolve payment_method_label from db.payment_methods when omitted instead of defaulting to the raw method key — otherwise cash_entries notes read 'INV · cash ·' instead of 'INV · Tunai ·'.",
+    "(Optional) Validate payload.payment_method against configured methods / canonical kinds in /pay endpoint to prevent typos leaking into reports.",
+    "(Optional) PUT /api/profile: allow empty-string username as no-op (currently 422 due to Field(min_length=3))."
+  ],
+  "critical_code_review_comments": [
+    "server.py:483-492 (_write_audit): Clean helper. UUID id, business_id scoping, created_at ISO. GET projection correctly excludes _id and business_id — no ObjectId leaks.",
+    "server.py:451-480 (ProfileUpdate + PUT /profile): username normalization to lowercase + case-insensitive clash via find_one({'username': new_un, 'id': {'$ne': user['id']}}) is correct. The {'id': {'$ne': ...}} guard prevents 400 when owner saves the same username.",
+    "server.py:507-520 (reset-transactions): results dict passed as details to audit log is the exact counts response. Nice symmetry. However shift hard-delete without open-shift warning (minor from iter-6) still applies.",
+    "server.py:593-625 (pay_debt): payment_method and payment_method_label flow through to both transaction.payments[] and cash_entries. Note string construction uses .strip(' ·') which cleanly handles empty note. received_by captured from user.name — good for audit.",
+    "server.py:533-542 (GET /audit-logs): sort(created_at, -1) with to_list(max(min(limit,500),1)). Correct bounds. Returns [] on empty — frontend-safe.",
+    "No index on db.audit_logs — future query (business_id, created_at desc) will scale poorly past ~10k rows. Add compound index later.",
+    "DebtPaymentInput.payment_method is `str` with no enum validation — see minor issue above."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter7_audit_username_debt.py (NEW, 13 tests covering audit logs owner-only + reset/delete audit writes, username update unique+short+clash+regression, debt payment with method/label persistence into payments[] and cash_entries note)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 iter-7 new; 153/153 full regression serial run with -o addopts=)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Each test class owns a fresh owner via POST /api/auth/register: iter7aud_<uuid> for audit logs, iter7un_<uuid> + iter7clash_<uuid> for username update + clash target, iter7pay_<uuid> for debt payments. Seeds include TEST_Iter7-prefixed products (goods only, SKUs ITER7-<hex>), credit sales, parked transactions, cash_entries, one operator per class for 403 cases. All data scoped by business_id, idempotent across re-runs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for full 153-test regression. The `-o addopts=` flag REMAINS REQUIRED to disable xdist loadscope — iter-5 cross-worker pytest.sale_tx_id coordination still breaks under default `-n 2 --dist loadscope` (unchanged test-design issue, not a product regression). The 3 new iter-7 server changes (audit log collection + GET /audit-logs, username field in PUT /profile with case-insensitive uniqueness, payment_method+payment_method_label in /pay) are all correct per spec and verified end-to-end. If frontend testing is requested next, focus on: (a) a new 'Log Audit' owner-only screen reading GET /api/audit-logs, (b) profile.tsx username input (3+ chars) with uniqueness error toast, (c) debt payment modal letting the user pick payment method+label (e.g. QRIS Dinamis / Transfer BCA) and ensuring the chosen label flows into the receipt/history.",
+  "rca_of_issue": "N/A — forward-testing iteration. All 3 new server features implemented correctly; no regressions found in 140 prior tests."
+}

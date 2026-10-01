@@ -164,6 +164,16 @@ export default function LainnyaScreen() {
               </View>
               <Ionicons name="chevron-forward" size={19} color={colors.muted} />
             </Pressable>
+            <Pressable testID="audit-log-button" onPress={() => router.push("/audit-log")} style={styles.listRow}>
+              <View style={[styles.settingIcon, { backgroundColor: colors.surfaceTertiary }]}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={colors.brandPrimary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.productName}>Log Audit Admin</Text>
+                <Text style={styles.muted}>Lihat riwayat aksi sensitif (reset / hapus)</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={19} color={colors.muted} />
+            </Pressable>
           </View>
         ) : null}
 

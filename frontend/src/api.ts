@@ -327,8 +327,21 @@ export async function downloadProductsExcel(): Promise<{ base64: string; filenam
   return { base64, filename };
 }
 
-export async function updateProfile(payload: { name?: string; current_password: string; new_password?: string }) {
+export async function updateProfile(payload: { name?: string; username?: string; current_password: string; new_password?: string }) {
   return apiRequest<{ ok: boolean; message?: string }>("/profile", { method: "PUT", body: JSON.stringify(payload) });
+}
+
+export type AuditLog = {
+  id: string;
+  actor_id: string;
+  actor_name: string;
+  action: string;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
+export async function listAuditLogs(limit = 100) {
+  return apiRequest<AuditLog[]>(`/audit-logs?limit=${limit}`);
 }
 
 export async function adminResetTransactions(password: string) {
