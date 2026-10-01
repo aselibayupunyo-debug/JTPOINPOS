@@ -49,3 +49,12 @@ Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to 
 24. Metode pembayaran di Hutang/Piutang + **Cetak Tanda Terima** setelah pelunasan (thermal) + Share WA
 25. Metode pembayaran di Pembelian mengambil dari daftar metode kustom
 26. Fix Invoice A5 blank page (viewport meta + remove fixed `width: 148mm`)
+
+## Session 2026-10 (Iter 10) — Fase 1 Delivered
+27. **Diskon per-item di kasir**: tombol "+ Tambah diskon" per cart line → modal dengan opsi Nominal (Rp) atau Persen (%). Preview diskon aktual sebelum apply. Field `manual_discount` di CartItem dipisahkan dari promo discount untuk kompatibilitas.
+28. **Custom date range di Laporan**: chip "Custom periode" membuka modal date range picker dengan preset chips (7 hari / 30 hari / Bulan lalu) + input manual YYYY-MM-DD. Berlaku untuk semua 5 endpoint laporan.
+29. **Backend custom period**: 5 endpoint `/reports/*` menerima `period=custom&start=YYYY-MM-DD&end=YYYY-MM-DD` lewat helper `_date_filter` + `_period_range`.
+30. **Export Excel Laporan multi-sheet**: `GET /api/reports/export?period=…&start=&end=` streams xlsx dengan 6 sheets (Ringkasan, Per Produk, Per Pelanggan, Per Operator, Detail Barang, Detail Transaksi). Tombol "Export Excel" di Laporan.
+31. **Buku Panduan Manual (in-app help)**: `/manual` route — 9 bagian collapsible: Mulai, Kasir, Stok, Laporan, Arus Kas, Struk, Offline, Operator, FAQ. Linked dari menu Lainnya.
+
+Backend testing: 191/191 PASS (168 regression + 23 new custom range/export tests).

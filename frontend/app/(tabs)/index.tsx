@@ -117,8 +117,9 @@ export default function KasirScreen() {
 
   // Auto-apply promos: for buy_x_get_y, mark Y units of free product as discount == price
   const appliedCart = useMemo<CartItem[]>(() => {
-    if (promos.length === 0 || cart.length === 0) return cart;
-    const next = cart.map((i) => ({ ...i, discount: 0 }));
+    const base = cart.map((i) => ({ ...i, discount: i.manual_discount ?? 0 }));
+    if (promos.length === 0 || cart.length === 0) return base;
+    const next = base;
     const appliedIds: string[] = [];
     for (const promo of promos) {
       if (promo.kind === "buy_x_get_y") {
@@ -193,6 +194,7 @@ export default function KasirScreen() {
   };
   const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: i.quantity + delta } : i).filter((i) => i.quantity > 0));
   const changePrice = (lineId: string, nextPrice: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, price: nextPrice } : i));
+  const changeDiscount = (lineId: string, nextDisc: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, manual_discount: Math.max(0, nextDisc) } : i));
   const removeFromCart = (lineId: string) => setCart((c) => c.filter((i) => i.line_id !== lineId));
 
   const openScanner = async () => {
@@ -500,6 +502,7 @@ export default function KasirScreen() {
         settings={settings}
         changeQty={changeQty}
         changePrice={changePrice}
+        changeDiscount={changeDiscount}
         removeFromCart={removeFromCart}
         onCancel={cancelTransaction}
         onPark={parkTransaction}
@@ -545,7 +548,7 @@ export default function KasirScreen() {
 }
 
 function CheckoutSheet({
-  visible, onClose, cart, customers, customer, setCustomer, paymentMethods, settings, changeQty, changePrice, removeFromCart, onCancel, onPark, onComplete,
+  visible, onClose, cart, customers, customer, setCustomer, paymentMethods, settings, changeQty, changePrice, changeDiscount, removeFromCart, onCancel, onPark, onComplete,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -557,6 +560,7 @@ function CheckoutSheet({
   settings: BusinessSettings | null;
   changeQty: (id: string, delta: number) => void;
   changePrice: (id: string, next: number) => void;
+  changeDiscount: (id: string, next: number) => void;
   removeFromCart: (id: string) => void;
   onCancel: () => void;
   onPark: () => void;
@@ -576,6 +580,9 @@ function CheckoutSheet({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [discEditor, setDiscEditor] = useState<null | { lineId: string; item: CartItem }>(null);
+  const [discType, setDiscType] = useState<"amount" | "percent">("amount");
+  const [discValue, setDiscValue] = useState("");
 
   useEffect(() => {
     if (visible) {
@@ -628,6 +635,7 @@ function CheckoutSheet({
             </View>
             {cart.map((item) => {
               const key = item.line_id ?? item.id;
+              const itemDisc = item.discount ?? 0;
               return (
               <View key={key} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                 <View style={styles.between}>
@@ -650,6 +658,20 @@ function CheckoutSheet({
                         <Text style={styles.muted}>{formatRupiah(item.price)} × {item.quantity}{(settings?.allow_price_edit ?? true) ? " · ketuk harga" : ""}</Text>
                       </Pressable>
                     )}
+                    <Pressable
+                      testID={`edit-discount-${key}`}
+                      onPress={() => {
+                        setDiscEditor({ lineId: key, item });
+                        setDiscType("amount");
+                        setDiscValue(String(item.manual_discount ?? ""));
+                      }}
+                      style={{ marginTop: 6, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 4 }}
+                    >
+                      <Ionicons name="pricetag-outline" size={13} color={itemDisc > 0 ? colors.success : colors.muted} />
+                      <Text style={{ color: itemDisc > 0 ? colors.success : colors.muted, fontSize: 12, fontWeight: "700" }}>
+                        {itemDisc > 0 ? `Diskon -${formatRupiah(itemDisc)}` : "+ Tambah diskon"}
+                      </Text>
+                    </Pressable>
                   </View>
                   <View style={styles.row}>
                     <Pressable testID={`qty-minus-${key}`} onPress={() => changeQty(key, -1)} style={styles.iconButton}><Ionicons name="remove" size={18} color={colors.brandPrimary} /></Pressable>
@@ -838,6 +860,65 @@ function CheckoutSheet({
                 </Pressable>
               ))}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!discEditor} transparent animationType="fade" onRequestClose={() => setDiscEditor(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
+            <Text style={styles.cardTitle}>Diskon item</Text>
+            <Text style={[styles.muted, { marginTop: 4 }]}>{discEditor?.item.name}</Text>
+            <Text style={[styles.muted, { marginBottom: 10 }]}>
+              {discEditor ? `${formatRupiah(discEditor.item.price)} × ${discEditor.item.quantity} = ${formatRupiah(discEditor.item.price * discEditor.item.quantity)}` : ""}
+            </Text>
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+              <Pressable testID="disc-type-amount" onPress={() => setDiscType("amount")} style={[styles.chip, discType === "amount" && styles.chipActive, { flex: 1 }]}>
+                <Text style={[styles.chipText, discType === "amount" && styles.chipTextActive]}>Nominal (Rp)</Text>
+              </Pressable>
+              <Pressable testID="disc-type-percent" onPress={() => setDiscType("percent")} style={[styles.chip, discType === "percent" && styles.chipActive, { flex: 1 }]}>
+                <Text style={[styles.chipText, discType === "percent" && styles.chipTextActive]}>Persen (%)</Text>
+              </Pressable>
+            </View>
+            <TextInput
+              testID="disc-value-input"
+              autoFocus
+              keyboardType="number-pad"
+              value={discValue}
+              onChangeText={setDiscValue}
+              placeholder={discType === "amount" ? "0" : "0 - 100"}
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
+            <Text style={[styles.muted, { marginBottom: 10 }]}>
+              {(() => {
+                if (!discEditor) return "";
+                const v = Number(discValue.replace(/\D/g, "")) || 0;
+                const lineTotal = discEditor.item.price * discEditor.item.quantity;
+                const amt = discType === "amount" ? v : Math.round(lineTotal * Math.min(v, 100) / 100);
+                return `Diskon aktual: ${formatRupiah(Math.min(amt, lineTotal))}`;
+              })()}
+            </Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Pressable testID="disc-clear" onPress={() => {
+                if (!discEditor) return;
+                changeDiscount(discEditor.lineId, 0);
+                setDiscEditor(null);
+              }} style={[styles.outlineButton, { flex: 1 }]}>
+                <Text style={styles.outlineText}>Hapus</Text>
+              </Pressable>
+              <Pressable testID="disc-apply" onPress={() => {
+                if (!discEditor) return;
+                const v = Number(discValue.replace(/\D/g, "")) || 0;
+                const lineTotal = discEditor.item.price * discEditor.item.quantity;
+                let amt = discType === "amount" ? v : Math.round(lineTotal * Math.min(v, 100) / 100);
+                amt = Math.min(amt, lineTotal);
+                changeDiscount(discEditor.lineId, amt);
+                setDiscEditor(null);
+              }} style={[styles.primaryButton, { flex: 1 }]}>
+                <Text style={styles.primaryButtonText}>Terapkan</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>

@@ -101,3 +101,93 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Fase 1 fitur baru untuk KasirKu Pro:
+  1. Diskon per-item di kasir (nominal Rp atau persen %)
+  2. Export laporan ke PDF/Excel per periode custom (date range picker + preset)
+  3. Buku Panduan Manual (in-app help offline)
+  Backend changes: /reports/* endpoints now support period=custom&start=YYYY-MM-DD&end=YYYY-MM-DD. New endpoint /reports/export (xlsx multi-sheet).
+
+backend:
+  - task: "Custom period support on reports endpoints"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added _period_range + _date_filter helpers. Updated /reports/summary, /reports/products, /reports/customers, /reports/operators, /reports/sales-items to accept Literal['daily','monthly','yearly','custom'] period plus optional start=YYYY-MM-DD and end=YYYY-MM-DD query params. Backward compatible with existing non-custom calls."
+  - task: "Excel multi-sheet laporan export"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/reports/export?period=<p>&start=&end= — returns xlsx streaming with 6 sheets: Ringkasan, Per Produk, Per Pelanggan, Per Operator, Detail Barang, Detail Transaksi. Uses pandas + xlsxwriter."
+
+frontend:
+  - task: "Diskon per-item di kasir"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added manual_discount field to CartItem. New tombol '+ Tambah diskon' per cart line inside Checkout sheet opens modal to pick type (Nominal Rp / Persen %) and value. Promos still work on top via appliedCart (which starts from manual_discount, promos may add more)."
+  - task: "Custom date range + Excel export di Laporan"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/laporan.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added 'Custom periode' chip which opens date range modal (YYYY-MM-DD inputs + preset chips: 7 hari / 30 hari / Bulan lalu). Added Export Excel button that downloads multi-sheet xlsx via downloadReportsExcel helper and shares via expo-sharing."
+  - task: "Buku Panduan Manual"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/manual.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Created /manual route with 9 collapsible sections covering onboarding, kasir, stok, laporan, arus-kas, struk, offline, operator, FAQ. Linked from Lainnya menu with book-outline icon."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 10
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Custom period support on reports endpoints"
+    - "Excel multi-sheet laporan export"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Fase 1 selesai (3 fitur baru + backend custom period). Fokus testing:
+      1. Backend: /api/reports/summary?period=custom&start=2026-05-01&end=2026-06-30 (dan tanpa custom tetap jalan untuk daily/monthly/yearly)
+      2. Backend: /api/reports/products, /customers, /operators, /sales-items dengan period=custom
+      3. Backend: GET /api/reports/export?period=monthly dan period=custom (should return .xlsx stream dengan 6 sheets)
+      4. Backend regression: pastikan /transactions, /sales-items, /summary biasa tetap jalan tanpa break
+      Kredensial di /app/memory/test_credentials.md (admintoko/admin123). Jika belum ada data transaksi, buat dulu beberapa produk + transaksi dummy via API lalu test endpoints.

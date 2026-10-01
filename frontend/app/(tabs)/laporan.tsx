@@ -1,10 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useFocusEffect } from "expo-router";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Share, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, Share, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, BusinessSettings, CustomerReportRow, formatRupiah, OperatorReportRow, PAYMENT_LABELS, ProductReportRow, ReportSummary, SalesItemRow, TransactionDoc } from "@/src/api";
+import { apiRequest, BusinessSettings, CustomerReportRow, downloadReportsExcel, formatRupiah, OperatorReportRow, PAYMENT_LABELS, ProductReportRow, ReportSummary, SalesItemRow, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
@@ -13,8 +15,17 @@ import { shareInvoicePdf, shareReportPdf } from "@/src/pdf";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
-type Period = "daily" | "monthly" | "yearly";
+type Period = "daily" | "monthly" | "yearly" | "custom";
 type Tab = "ringkasan" | "produk" | "pelanggan" | "operator" | "barang" | "transaksi";
+
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function firstDayOfMonthYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
 
 export default function LaporanScreen() {
   const styles = useAppStyles();
@@ -24,6 +35,11 @@ export default function LaporanScreen() {
   const toast = useToast();
   const [period, setPeriod] = useState<Period>("daily");
   const [tab, setTab] = useState<Tab>("ringkasan");
+  const [customStart, setCustomStart] = useState<string>(firstDayOfMonthYmd());
+  const [customEnd, setCustomEnd] = useState<string>(todayYmd());
+  const [customOpen, setCustomOpen] = useState(false);
+  const [draftStart, setDraftStart] = useState<string>(firstDayOfMonthYmd());
+  const [draftEnd, setDraftEnd] = useState<string>(todayYmd());
   const [report, setReport] = useState<ReportSummary | null>(null);
   const [products, setProducts] = useState<ProductReportRow[]>([]);
   const [customers, setCustomers] = useState<CustomerReportRow[]>([]);
@@ -32,30 +48,39 @@ export default function LaporanScreen() {
   const [transactions, setTransactions] = useState<TransactionDoc[]>([]);
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
   const [pdfBusy, setPdfBusy] = useState<string | null>(null);
+  const [xlsxBusy, setXlsxBusy] = useState(false);
   const [metricDetail, setMetricDetail] = useState<null | { title: string; rows: { label: string; value: string }[]; description?: string }>(null);
   const [operatorDetail, setOperatorDetail] = useState<null | { operator: OperatorReportRow; rows: SalesItemRow[] }>(null);
 
-  const load = useCallback(async (p: Period) => {
+  const load = useCallback(async (p: Period, s?: string, e?: string) => {
     try {
-      const [s, pr, c, op, si, tx] = await Promise.all([
-        apiRequest<ReportSummary>(`/reports/summary?period=${p}`),
-        apiRequest<{ rows: ProductReportRow[] }>(`/reports/products?period=${p}`),
-        apiRequest<{ rows: CustomerReportRow[] }>(`/reports/customers?period=${p}`),
-        apiRequest<{ rows: OperatorReportRow[] }>(`/reports/operators?period=${p}`),
-        apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?period=${p}`),
+      const qs = p === "custom" ? `period=custom&start=${s}&end=${e}` : `period=${p}`;
+      const [sum, pr, c, op, si, tx] = await Promise.all([
+        apiRequest<ReportSummary>(`/reports/summary?${qs}`),
+        apiRequest<{ rows: ProductReportRow[] }>(`/reports/products?${qs}`),
+        apiRequest<{ rows: CustomerReportRow[] }>(`/reports/customers?${qs}`),
+        apiRequest<{ rows: OperatorReportRow[] }>(`/reports/operators?${qs}`),
+        apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?${qs}`),
         apiRequest<TransactionDoc[]>(`/transactions?kind=sale&limit=500`),
       ]);
-      setReport(s); setProducts(pr.rows); setCustomers(c.rows); setOperators(op.rows); setSalesItems(si.rows);
+      setReport(sum); setProducts(pr.rows); setCustomers(c.rows); setOperators(op.rows); setSalesItems(si.rows);
       // Filter transactions by period
-      const start = p === "daily" ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
-        : p === "monthly" ? new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
-        : new Date(new Date().getFullYear(), 0, 1).toISOString();
-      setTransactions(tx.filter((t) => t.created_at >= start && t.status !== "cancelled"));
-    } catch (e) { toast.error("Gagal memuat laporan", e instanceof Error ? e.message : undefined); }
+      let startIso = "";
+      let endIso = "";
+      if (p === "custom" && s && e) {
+        startIso = new Date(`${s}T00:00:00`).toISOString();
+        endIso = new Date(`${e}T23:59:59.999`).toISOString();
+      } else {
+        startIso = p === "daily" ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
+          : p === "monthly" ? new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+          : new Date(new Date().getFullYear(), 0, 1).toISOString();
+      }
+      setTransactions(tx.filter((t) => t.created_at >= startIso && (!endIso || t.created_at <= endIso) && t.status !== "cancelled"));
+    } catch (err) { toast.error("Gagal memuat laporan", err instanceof Error ? err.message : undefined); }
   }, [toast]);
 
-  useFocusEffect(useCallback(() => { load(period); }, [load, period]));
-  useEffect(() => { load(period); apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined); }, [period, load]);
+  useFocusEffect(useCallback(() => { load(period, customStart, customEnd); }, [load, period, customStart, customEnd]));
+  useEffect(() => { load(period, customStart, customEnd); apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined); }, [period, customStart, customEnd, load]);
 
   if (!can("reports")) {
     return (
@@ -67,7 +92,23 @@ export default function LaporanScreen() {
     );
   }
 
-  const periodLabel = period === "daily" ? "Hari ini" : period === "monthly" ? "Bulan ini" : "Tahun ini";
+  const periodLabel = period === "daily" ? "Hari ini" : period === "monthly" ? "Bulan ini" : period === "yearly" ? "Tahun ini" : `${customStart} s/d ${customEnd}`;
+
+  const openCustom = () => {
+    setDraftStart(customStart);
+    setDraftEnd(customEnd);
+    setCustomOpen(true);
+  };
+
+  const applyCustom = () => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(draftStart) || !/^\d{4}-\d{2}-\d{2}$/.test(draftEnd)) {
+      return toast.error("Format tanggal salah", "Gunakan format YYYY-MM-DD, contoh 2026-06-01.");
+    }
+    if (draftStart > draftEnd) return toast.error("Rentang tidak valid", "Tanggal mulai harus sebelum tanggal akhir.");
+    setCustomStart(draftStart); setCustomEnd(draftEnd);
+    setPeriod("custom");
+    setCustomOpen(false);
+  };
 
   const openMetric = (key: string) => {
     if (!report) return;
@@ -111,7 +152,8 @@ export default function LaporanScreen() {
 
   const openOperator = async (operator: OperatorReportRow) => {
     try {
-      const res = await apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?period=${period}${operator.operator_id ? `&operator_id=${operator.operator_id}` : ""}`);
+      const qs = period === "custom" ? `period=custom&start=${customStart}&end=${customEnd}` : `period=${period}`;
+      const res = await apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?${qs}${operator.operator_id ? `&operator_id=${operator.operator_id}` : ""}`);
       setOperatorDetail({ operator, rows: res.rows });
     } catch (e) { toast.error("Gagal memuat detail operator", e instanceof Error ? e.message : undefined); }
   };
@@ -231,6 +273,11 @@ export default function LaporanScreen() {
               <Text style={[styles.chipText, period === item.key && styles.chipTextActive]}>{item.label}</Text>
             </Pressable>
           ))}
+          <Pressable testID="period-custom" onPress={openCustom} style={[styles.chip, period === "custom" && styles.chipActive]}>
+            <Text style={[styles.chipText, period === "custom" && styles.chipTextActive]}>
+              {period === "custom" ? `${customStart} → ${customEnd}` : "Custom periode"}
+            </Text>
+          </Pressable>
         </ScrollView>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
           {([
@@ -401,10 +448,103 @@ export default function LaporanScreen() {
         <Pressable testID="send-pdf" onPress={sendPdf} style={[styles.primaryButton, { marginTop: 10 }]}>
           <Text style={styles.primaryButtonText}>Kirim laporan sebagai PDF</Text>
         </Pressable>
+        <Pressable
+          testID="send-xlsx"
+          disabled={xlsxBusy}
+          onPress={async () => {
+            if (Platform.OS === "web") return toast.info("Export Excel di aplikasi mobile", "Buka di Expo Go / build Android untuk mengunduh file xlsx.");
+            setXlsxBusy(true);
+            try {
+              const { base64, filename } = await downloadReportsExcel(period, period === "custom" ? customStart : undefined, period === "custom" ? customEnd : undefined);
+              const dir = FileSystem.cacheDirectory ?? "";
+              const path = `${dir}${filename}`;
+              await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 });
+              if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(path, {
+                  mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                  dialogTitle: "Bagikan laporan Excel",
+                  UTI: "org.openxmlformats.spreadsheetml.sheet",
+                });
+              } else {
+                toast.success("File tersimpan", path);
+              }
+            } catch (e) { toast.error("Export Excel gagal", e instanceof Error ? e.message : undefined); }
+            finally { setXlsxBusy(false); }
+          }}
+          style={[styles.outlineButton, { marginTop: 10 }, xlsxBusy && { opacity: 0.5 }]}
+        >
+          {xlsxBusy ? <ActivityIndicator color={colors.brandPrimary} /> : <Text style={styles.outlineText}>Export Excel (.xlsx) · multi-sheet</Text>}
+        </Pressable>
         <Pressable testID="share-report" onPress={shareReport} style={[styles.outlineButton, { marginTop: 10 }]}>
           <Text style={styles.outlineText}>Bagikan via WhatsApp / Lainnya</Text>
         </Pressable>
       </ScrollView>
+
+      <Modal visible={customOpen} transparent animationType="fade" onRequestClose={() => setCustomOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
+            <Text style={styles.cardTitle}>Pilih rentang tanggal</Text>
+            <Text style={[styles.muted, { marginTop: 6, marginBottom: 10 }]}>Format: YYYY-MM-DD (contoh 2026-06-01)</Text>
+            <Text style={styles.inputLabel}>Dari tanggal</Text>
+            <TextInput
+              testID="custom-start-input"
+              value={draftStart}
+              onChangeText={setDraftStart}
+              placeholder="2026-06-01"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              autoCapitalize="none"
+            />
+            <Text style={styles.inputLabel}>Sampai tanggal</Text>
+            <TextInput
+              testID="custom-end-input"
+              value={draftEnd}
+              onChangeText={setDraftEnd}
+              placeholder={todayYmd()}
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              autoCapitalize="none"
+            />
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              <Pressable testID="preset-7days" onPress={() => {
+                const end = new Date();
+                const start = new Date();
+                start.setDate(start.getDate() - 6);
+                const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                setDraftStart(fmt(start)); setDraftEnd(fmt(end));
+              }} style={styles.chip}>
+                <Text style={styles.chipText}>7 hari terakhir</Text>
+              </Pressable>
+              <Pressable testID="preset-30days" onPress={() => {
+                const end = new Date();
+                const start = new Date();
+                start.setDate(start.getDate() - 29);
+                const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                setDraftStart(fmt(start)); setDraftEnd(fmt(end));
+              }} style={styles.chip}>
+                <Text style={styles.chipText}>30 hari terakhir</Text>
+              </Pressable>
+              <Pressable testID="preset-lastmonth" onPress={() => {
+                const now = new Date();
+                const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const end = new Date(now.getFullYear(), now.getMonth(), 0);
+                const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                setDraftStart(fmt(start)); setDraftEnd(fmt(end));
+              }} style={styles.chip}>
+                <Text style={styles.chipText}>Bulan lalu</Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+              <Pressable onPress={() => setCustomOpen(false)} style={[styles.outlineButton, { flex: 1 }]}>
+                <Text style={styles.outlineText}>Batal</Text>
+              </Pressable>
+              <Pressable testID="custom-apply" onPress={applyCustom} style={[styles.primaryButton, { flex: 1 }]}>
+                <Text style={styles.primaryButtonText}>Terapkan</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={!!metricDetail} transparent animationType="slide" onRequestClose={() => setMetricDetail(null)}>
         <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "flex-end" }}>

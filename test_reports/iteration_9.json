@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration-9 backend regression for KasirKu Pro — deployment-unblock verification after FE-only addition of `react-zlib-js@3.0.0` (needed by bwip-js barcode renderer). Backend untouched by iter-9; full regression run end-to-end against preview URL. RESULT: 168/168 PASS (serial, `-o addopts=`). Composition: 155 carried-over (iter-1..7 + public_api) + 4 iter-8 (updated for new idempotent /parked contract) + 10 NEW iter-9 end-to-end regressions (auth register/login/me + wrong-password 401, products CRUD + no _id leak, sale decrements stock, purchase increments stock, parked create/list/idempotent-delete, credit sale → /pay full with payment_method+label, reports/summary + sales-items + products, admin reset-transactions + delete-all-products with owner password payload writing audit entries, audit-logs 403 for cashier, PUT /profile username change — case-insensitive clash → 400, min_length<3 → 422, old username can't login + new can). IMPORTANT CONTRACT CHANGE DETECTED (vs iter-8 expectations): DELETE /api/parked/{id} is NOW IDEMPOTENT — returns 200 {\"ok\":true,\"deleted\":0} for a stale/already-deleted parked instead of 404 'Antrian tidak ditemukan'. This matches the optional action item from iter-8 (someone shipped it). I updated the 2 iter-8 tests that pinned 404 to pin the new idempotent 200 behavior. The frontend consumedParkedRef guard remains correct but is no longer strictly required — defense-in-depth. No other backend behavioral deltas found. The `react-zlib-js` package addition is purely transitive for bwip-js on React Native and has ZERO backend surface.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/reports/sales-items",
+        "issue": "Response shape is {period, rows:[...], total, qty} wrapped object — NOT a flat list as some tests had assumed. Non-blocking but worth documenting the stable contract."
+      },
+      {
+        "endpoint": "(carried) GET /api/audit-logs",
+        "issue": "Still no action/date filters or pagination cursor (iter-7 carry)."
+      },
+      {
+        "endpoint": "(carried) POST /api/transactions/{id}/pay",
+        "issue": "payment_method_label still defaults to raw method key when omitted (iter-7 carry)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter9_regression.py",
+    "/app/backend/tests/test_iter8_regression.py",
+    "/app/test_reports/pytest/iteration9_full.xml"
+  ],
+  "action_items": [
+    "(Information only) Backend DELETE /api/parked/{id} contract changed between iter-8 and iter-9: now returns 200 {ok:true, deleted:N} for both existing and missing parked (idempotent). FE consumedParkedRef guard is now defensive-only (no longer strictly required to swallow 404). Consider removing the FE guard once this is verified to be the long-term contract.",
+    "(Carried) /app/backend/pytest.ini still ships `-n 2 --dist loadscope`; must run full regression with `-o addopts=` to avoid iter-5 cross-worker state collisions.",
+    "(Carried) server.py is 1456 lines — above 700-line soft limit. Split into routers.",
+    "(Carried) Audit log filter/pagination; payment_method_label resolution from configured methods when omitted.",
+    "No deployment-blocker found. react-zlib-js dep addition does not affect backend."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1298-1303 (DELETE /parked/{id}): NEW idempotent contract — `delete_one` + return {ok:true, deleted:count}. Matches iter-8 optional action item. Good hardening.",
+    "server.py:451-480 (PUT /profile): current_password required; new username normalized via .lower() and clash check uses `username:<lower>`+`id:{$ne}` — case-insensitive clash correctly rejected with 400.",
+    "server.py:507-530 (admin reset-transactions + delete-all-products): both gated by owner password payload and write audit entries via _write_audit. Not idempotent for audit — each call writes one entry (verified).",
+    "No backend changes relative to iter-8 other than the parked DELETE idempotency improvement. frontend-only react-zlib-js addition has zero backend coupling.",
+    "server.py:1285-1297 (GET+POST /parked): still accepts customer_id + price_level_id via ParkedTransactionInput, LIST returns both unchanged."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter9_regression.py (NEW — 10 end-to-end backend regression tests spanning auth, products, transactions sale/purchase, parked, debt pay, reports, admin dangerous, audit RBAC, profile username flow)",
+    "/app/backend/tests/test_iter8_regression.py (UPDATED — 2 tests re-pinned to new idempotent DELETE /parked/{id} contract: now expects 200 {ok:true,deleted:0} instead of 404 'Antrian tidak ditemukan')"
+  ],
+  "success_rate": {
+    "backend": "100% (168/168 full regression, serial run with `-o addopts=`)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Fresh TEST_Iter9 owners (iter9_*/password123) via POST /api/auth/register per module; TEST_Iter9 Goods products (SKU ITER9-/CRUD-/ADM-<hex>); TEST_Iter9 cashier operator for RBAC test; all data scoped by business_id, self-cleaning or isolated per business.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for full 168-test regression (~47s). The `-o addopts=` flag REMAINS REQUIRED. iter-9 added 10 end-to-end tests in test_iter9_regression.py — these are the preferred smoke suite for future backend-touch iterations. Note the UPDATED contract for DELETE /api/parked/{id}: now always 200 {ok:true, deleted:N} regardless of row presence. If future FE testing is requested, verify the barcode generation flow in src/pdf.ts actually renders a barcode on Android build (bwip-js + react-zlib-js) — this is the real deployment unblock that this iteration was about. Backend has no barcode endpoint; it's pure client-side rendering.",
+  "rca_of_issue": "N/A — pure deployment-unblock regression iteration. react-zlib-js is a transitive dep required by bwip-js (barcode renderer for /src/pdf.ts) on React Native where zlib isn't available natively. Addition is correct and has no backend impact. Full regression confirms no backend endpoints regressed. One behavioral delta from iter-8 (parked DELETE idempotency) was already a planned improvement and is now shipped; iter-8 tests updated to match the new contract."
+}

@@ -707,20 +707,19 @@ async def list_permissions():
 
 # ---------- Reports ----------
 @api_router.get("/reports/summary")
-async def report_summary(period: Literal["daily", "monthly", "yearly"] = "daily", user: dict = Depends(current_user)):
-    now = datetime.now(timezone.utc)
-    if period == "daily":
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "monthly":
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+async def report_summary(
+    period: Literal["daily", "monthly", "yearly", "custom"] = "daily",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
+    date_filter = _date_filter(period, start, end)
     docs = await db.transactions.find(
-        {"business_id": user["business_id"], "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
+        {"business_id": user["business_id"], "created_at": date_filter, "status": {"$ne": "cancelled"}},
         {"_id": 0, "business_id": 0},
     ).to_list(10000)
     cash_entries = await db.cash_entries.find(
-        {"business_id": user["business_id"], "created_at": {"$gte": start.isoformat()}},
+        {"business_id": user["business_id"], "created_at": date_filter},
         {"_id": 0, "business_id": 0},
     ).to_list(10000)
     sales = [d for d in docs if d["transaction_type"] == "sale"]
@@ -1048,12 +1047,52 @@ def _period_start(period: str) -> datetime:
     return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
+def _parse_date(value: Optional[str], end: bool = False) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        # Accept YYYY-MM-DD or full ISO
+        if len(value) == 10:
+            dt = datetime.strptime(value, "%Y-%m-%d")
+        else:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        if end and len(value) == 10:
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return dt
+    except Exception:
+        return None
+
+
+def _period_range(period: str, start: Optional[str] = None, end: Optional[str] = None) -> tuple[datetime, Optional[datetime]]:
+    """Return (start_dt, end_dt_or_None) for a given period. For 'custom', parses start/end dates."""
+    if period == "custom":
+        s = _parse_date(start, end=False) or _period_start("daily")
+        e = _parse_date(end, end=True)
+        return s, e
+    return _period_start(period), None
+
+
+def _date_filter(period: str, start: Optional[str], end: Optional[str]) -> dict[str, Any]:
+    s, e = _period_range(period, start, end)
+    cond: dict[str, Any] = {"$gte": s.isoformat()}
+    if e is not None:
+        cond["$lte"] = e.isoformat()
+    return cond
+
+
 @api_router.get("/reports/products")
-async def report_products(period: Literal["daily", "monthly", "yearly"] = "monthly", user: dict = Depends(current_user)):
+async def report_products(
+    period: Literal["daily", "monthly", "yearly", "custom"] = "monthly",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     ensure_permission(user, "reports")
-    start = _period_start(period)
+    date_filter = _date_filter(period, start, end)
     sales = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": date_filter, "status": {"$ne": "cancelled"}},
         {"_id": 0, "items": 1},
     ).to_list(10000)
     buckets: dict[str, dict[str, Any]] = {}
@@ -1069,11 +1108,16 @@ async def report_products(period: Literal["daily", "monthly", "yearly"] = "month
 
 
 @api_router.get("/reports/customers")
-async def report_customers(period: Literal["daily", "monthly", "yearly"] = "monthly", user: dict = Depends(current_user)):
+async def report_customers(
+    period: Literal["daily", "monthly", "yearly", "custom"] = "monthly",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     ensure_permission(user, "reports")
-    start = _period_start(period)
+    date_filter = _date_filter(period, start, end)
     sales = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": date_filter, "status": {"$ne": "cancelled"}},
         {"_id": 0, "customer_id": 1, "customer_name": 1, "total": 1, "outstanding": 1, "payment_method": 1, "items": 1},
     ).to_list(50000)
     buckets: dict[str, dict[str, Any]] = {}
@@ -1090,11 +1134,16 @@ async def report_customers(period: Literal["daily", "monthly", "yearly"] = "mont
 
 
 @api_router.get("/reports/operators")
-async def report_operators(period: Literal["daily", "monthly", "yearly"] = "monthly", user: dict = Depends(current_user)):
+async def report_operators(
+    period: Literal["daily", "monthly", "yearly", "custom"] = "monthly",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     ensure_permission(user, "reports")
-    start = _period_start(period)
+    date_filter = _date_filter(period, start, end)
     docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": date_filter, "status": {"$ne": "cancelled"}},
         {"_id": 0, "created_by": 1, "created_by_name": 1, "total": 1, "items": 1},
     ).to_list(50000)
     buckets: dict[str, dict[str, Any]] = {}
@@ -1111,18 +1160,20 @@ async def report_operators(period: Literal["daily", "monthly", "yearly"] = "mont
 
 @api_router.get("/reports/sales-items")
 async def report_sales_items(
-    period: Literal["daily", "monthly", "yearly"] = "monthly",
+    period: Literal["daily", "monthly", "yearly", "custom"] = "monthly",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
     operator_id: Optional[str] = None,
     product_id: Optional[str] = None,
     user: dict = Depends(current_user),
 ):
     """Flat list of sold items with invoice number, date/time, operator & customer. Can filter by operator or product."""
     ensure_permission(user, "reports")
-    start = _period_start(period)
+    date_filter = _date_filter(period, start, end)
     query: dict[str, Any] = {
         "business_id": user["business_id"],
         "transaction_type": "sale",
-        "created_at": {"$gte": start.isoformat()},
+        "created_at": date_filter,
         "status": {"$ne": "cancelled"},
     }
     if operator_id:
@@ -1189,6 +1240,148 @@ async def export_products(user: dict = Depends(current_user)):
                 worksheet.set_column(idx, idx, 15, money_fmt)
     buffer.seek(0)
     filename = f"produk-{user['business_name'].replace(' ', '_')}-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/reports/export")
+async def export_reports(
+    period: Literal["daily", "monthly", "yearly", "custom"] = "monthly",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
+    """Export laporan bisnis ke Excel multi-sheet (Ringkasan, Produk, Pelanggan, Operator, Barang, Transaksi)."""
+    ensure_permission(user, "reports")
+    date_filter = _date_filter(period, start, end)
+    bid = user["business_id"]
+
+    tx_docs = await db.transactions.find(
+        {"business_id": bid, "created_at": date_filter, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "business_id": 0},
+    ).sort("created_at", -1).to_list(50000)
+    cash_entries = await db.cash_entries.find(
+        {"business_id": bid, "created_at": date_filter}, {"_id": 0, "business_id": 0},
+    ).to_list(10000)
+
+    sales = [d for d in tx_docs if d["transaction_type"] == "sale"]
+    sale_returns = [d for d in tx_docs if d["transaction_type"] == "sale_return"]
+    purchases = [d for d in tx_docs if d["transaction_type"] == "purchase"]
+    sales_total = sum(d["total"] for d in sales) - sum(d["total"] for d in sale_returns)
+    purchase_total = sum(d["total"] for d in purchases)
+    gross_profit = sum(sum((i["price"] - i.get("cost", 0)) * i["quantity"] - i.get("discount", 0) for i in d["items"]) for d in sales)
+    cash_in = sum(d["total"] for d in sales if d["payment_method"] == "cash") + sum(e["amount"] for e in cash_entries if e["entry_type"] == "income")
+    cash_out = sum(d["total"] for d in purchases if d["payment_method"] == "cash") + sum(e["amount"] for e in cash_entries if e["entry_type"] == "expense")
+
+    # Produk bucket
+    prod_buckets: dict[str, dict[str, Any]] = {}
+    for tx in sales:
+        for item in tx.get("items", []):
+            pid = item["product_id"]
+            b = prod_buckets.setdefault(pid, {"Nama Produk": item["name"], "Qty": 0, "Omzet": 0, "Laba": 0})
+            b["Qty"] += item["quantity"]
+            b["Omzet"] += item["price"] * item["quantity"] - item.get("discount", 0)
+            b["Laba"] += (item["price"] - item.get("cost", 0)) * item["quantity"] - item.get("discount", 0)
+    prod_rows = sorted(prod_buckets.values(), key=lambda r: r["Laba"], reverse=True)
+
+    # Pelanggan bucket
+    cust_buckets: dict[str, dict[str, Any]] = {}
+    for tx in sales:
+        key = tx.get("customer_id") or f"name:{tx.get('customer_name', 'Umum')}"
+        b = cust_buckets.setdefault(key, {"Pelanggan": tx.get("customer_name", "Umum"), "Transaksi": 0, "Total Belanja": 0, "Piutang": 0, "Laba": 0})
+        b["Transaksi"] += 1
+        b["Total Belanja"] += tx.get("total", 0)
+        b["Piutang"] += tx.get("outstanding", 0)
+        for item in tx.get("items", []):
+            b["Laba"] += (item["price"] - item.get("cost", 0)) * item["quantity"] - item.get("discount", 0)
+    cust_rows = sorted(cust_buckets.values(), key=lambda r: r["Total Belanja"], reverse=True)
+
+    # Operator bucket
+    op_buckets: dict[str, dict[str, Any]] = {}
+    for tx in sales:
+        key = tx.get("created_by") or "-"
+        b = op_buckets.setdefault(key, {"Operator": tx.get("created_by_name", "-"), "Transaksi": 0, "Penjualan": 0, "Laba": 0})
+        b["Transaksi"] += 1
+        b["Penjualan"] += tx.get("total", 0)
+        for item in tx.get("items", []):
+            b["Laba"] += (item["price"] - item.get("cost", 0)) * item["quantity"] - item.get("discount", 0)
+    op_rows = sorted(op_buckets.values(), key=lambda r: r["Penjualan"], reverse=True)
+
+    # Detail Barang
+    item_rows: list[dict[str, Any]] = []
+    for tx in sales:
+        for item in tx.get("items", []):
+            item_rows.append({
+                "Tanggal": tx.get("created_at", "")[:19].replace("T", " "),
+                "Invoice": tx.get("invoice_no", ""),
+                "Pelanggan": tx.get("customer_name", "Umum"),
+                "Operator": tx.get("created_by_name", "-"),
+                "Produk": item.get("name", ""),
+                "Satuan": item.get("unit", ""),
+                "Qty": item.get("quantity", 0),
+                "Harga": item.get("price", 0),
+                "Diskon": item.get("discount", 0),
+                "Subtotal": item["price"] * item["quantity"] - item.get("discount", 0),
+            })
+
+    # Detail Transaksi
+    tx_rows = [{
+        "Tanggal & Jam": tx.get("created_at", "")[:19].replace("T", " "),
+        "Invoice": tx.get("invoice_no", ""),
+        "Jenis": tx.get("transaction_type", ""),
+        "Pelanggan": tx.get("customer_name", "Umum"),
+        "Operator": tx.get("created_by_name", "-"),
+        "Jumlah Item": len(tx.get("items", [])),
+        "Total": tx.get("total", 0),
+        "Metode": tx.get("payment_method_label") or tx.get("payment_method", ""),
+    } for tx in tx_docs]
+
+    summary_rows = [
+        {"Metrik": "Periode", "Nilai": period if period != "custom" else f"{start or ''} s/d {end or ''}"},
+        {"Metrik": "Total Penjualan", "Nilai": sales_total},
+        {"Metrik": "Total Pembelian", "Nilai": purchase_total},
+        {"Metrik": "Laba Kotor", "Nilai": gross_profit},
+        {"Metrik": "Jumlah Transaksi Penjualan", "Nilai": len(sales)},
+        {"Metrik": "Kas Masuk", "Nilai": cash_in},
+        {"Metrik": "Kas Keluar", "Nilai": cash_out},
+        {"Metrik": "Saldo Kas", "Nilai": cash_in - cash_out},
+    ]
+
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        header_fmt = workbook.add_format({"bold": True, "bg_color": "#0f8043", "font_color": "white", "border": 1})
+        money_fmt = workbook.add_format({"num_format": "#,##0"})
+
+        def _write(name: str, rows: list[dict[str, Any]], money_cols: tuple[str, ...] = ()) -> None:
+            frame = pd.DataFrame(rows) if rows else pd.DataFrame([{"(kosong)": ""}])
+            frame.to_excel(writer, index=False, sheet_name=name[:31])
+            ws = writer.sheets[name[:31]]
+            for col_idx, column in enumerate(frame.columns):
+                ws.write(0, col_idx, column, header_fmt)
+                try:
+                    width = max(14, min(40, int(frame[column].astype(str).map(len).max() or 10) + 2))
+                except Exception:
+                    width = 18
+                ws.set_column(col_idx, col_idx, width)
+            for col_name in money_cols:
+                if col_name in frame.columns:
+                    idx = frame.columns.get_loc(col_name)
+                    ws.set_column(idx, idx, 16, money_fmt)
+
+        _write("Ringkasan", summary_rows, money_cols=("Nilai",))
+        _write("Per Produk", prod_rows, money_cols=("Omzet", "Laba"))
+        _write("Per Pelanggan", cust_rows, money_cols=("Total Belanja", "Piutang", "Laba"))
+        _write("Per Operator", op_rows, money_cols=("Penjualan", "Laba"))
+        _write("Detail Barang", item_rows, money_cols=("Harga", "Diskon", "Subtotal"))
+        _write("Detail Transaksi", tx_rows, money_cols=("Total",))
+
+    buffer.seek(0)
+    label = period if period != "custom" else f"{(start or '').replace('-','')}_{(end or '').replace('-','')}"
+    filename = f"laporan-{user['business_name'].replace(' ', '_')}-{label}-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx"
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -164,18 +164,22 @@ class TestParkedConsumedDelete:
         )
         assert d1.status_code == 200
 
-        # DELETE again -> 404 with exact copy the frontend consumedParkedRef guards
+        # DELETE again -> NEW CONTRACT (iter-9): idempotent 200 {deleted:0}
+        # Previously returned 404 'Antrian tidak ditemukan'. The frontend
+        # consumedParkedRef guard remains valid but is no longer strictly
+        # required (backend now swallows the double-delete).
         d2 = session.delete(
             f"{BASE_URL}/api/parked/{pid}", headers=owner["headers"]
         )
-        assert d2.status_code == 404, d2.text
-        assert "Antrian tidak ditemukan" in d2.text, d2.text
+        assert d2.status_code == 200, d2.text
+        assert d2.json() == {"ok": True, "deleted": 0}
 
-        # And a random uuid parked_id -> same 404
+        # And a random uuid parked_id -> same idempotent 200 {deleted:0}
         d3 = session.delete(
             f"{BASE_URL}/api/parked/{uuid.uuid4().hex}", headers=owner["headers"]
         )
-        assert d3.status_code == 404
+        assert d3.status_code == 200
+        assert d3.json()["deleted"] == 0
 
 
 # ---------- 3. Sale completion from a parked resume does NOT touch parked row ----------
@@ -221,11 +225,13 @@ class TestParkedResumeDoesNotAutoDelete:
         assert d.status_code == 200
 
         # Re-delete (simulating the double-trigger that iter-8 consumedParkedRef
-        # must suppress on client side) -> backend returns 404.
+        # suppresses on client side) -> backend now returns idempotent 200
+        # {deleted:0} (iter-9 contract — previously 404).
         d2 = session.delete(
             f"{BASE_URL}/api/parked/{parked['id']}", headers=owner["headers"]
         )
-        assert d2.status_code == 404
+        assert d2.status_code == 200
+        assert d2.json()["deleted"] == 0
 
 
 # ---------- 4. Debt payment /pay still accepts payment_method + label (iter-7 carry) ----------

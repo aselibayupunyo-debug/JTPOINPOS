@@ -39,7 +39,7 @@ export type Product = {
   image_base64?: string | null;
 };
 
-export type CartItem = Product & { quantity: number; line_id?: string; product_id?: string; unit?: string; unit_factor?: number; discount?: number };
+export type CartItem = Product & { quantity: number; line_id?: string; product_id?: string; unit?: string; unit_factor?: number; discount?: number; manual_discount?: number };
 
 export type TransactionKind = "sale" | "purchase" | "sale_return" | "purchase_return";
 export type PaymentKind = "cash" | "credit" | "qris_static" | "custom";
@@ -323,6 +323,31 @@ export async function downloadProductsExcel(): Promise<{ base64: string; filenam
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   // btoa is available on native (Hermes) via global polyfill
+  const base64 = btoa(binary);
+  return { base64, filename };
+}
+
+/** Download Excel laporan multi-sheet untuk periode tertentu. */
+export async function downloadReportsExcel(period: "daily" | "monthly" | "yearly" | "custom", start?: string, end?: string): Promise<{ base64: string; filename: string }> {
+  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
+  const qs = new URLSearchParams({ period });
+  if (start) qs.set("start", start);
+  if (end) qs.set("end", end);
+  const response = await fetch(`${baseUrl}/api/reports/export?${qs.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!response.ok) {
+    const err = await response.text().catch(() => "");
+    throw new Error(err || "Gagal mengunduh laporan");
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const filename = match ? match[1] : `laporan-${Date.now()}.xlsx`;
+  const buf = await response.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   const base64 = btoa(binary);
   return { base64, filename };
 }

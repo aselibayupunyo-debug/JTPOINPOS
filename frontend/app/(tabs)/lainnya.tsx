@@ -49,6 +49,7 @@ export default function LainnyaScreen() {
     { icon: "person-add-outline", title: "Operator & kewenangan", detail: "Atur akses tim kasir", path: "/operators", ownerOnly: true },
     { icon: "archive-outline", title: "Backup & Restore (ZIP)", detail: "Simpan dan pulihkan seluruh data", path: "/backup", ownerOnly: true },
     { icon: "print-outline", title: "Pengaturan toko & struk", detail: "Logo, printer 58/80mm, WhatsApp", path: "/settings", permission: "settings" },
+    { icon: "book-outline", title: "Buku Panduan Manual", detail: "Cara pakai semua fitur KasirKu Pro", path: "/manual" },
     { icon: "person-circle-outline", title: "Profil & Password", detail: "Ubah nama tampilan & password admin", path: "/profile", ownerOnly: true },
   ];
 

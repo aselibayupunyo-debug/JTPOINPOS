@@ -1,0 +1,58 @@
+{
+  "summary": "Iter-10 backend testing for KasirKu Pro Fase 1 — custom date range on reports + new multi-sheet Excel export endpoint. Full regression PASS: 191/191 (168 carry-over + 23 NEW iter-10). All 5 report endpoints (/reports/summary|products|customers|operators|sales-items) accept period=custom with start/end YYYY-MM-DD and correctly filter transactions; period=daily|monthly|yearly regression still works. GET /api/reports/export streams a valid xlsx (content-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, Content-Disposition attachment .xlsx) containing exactly the 6 required sheets: Ringkasan, Per Produk, Per Pelanggan, Per Operator, Detail Barang, Detail Transaksi — verified by parsing the stream with openpyxl and asserting sheet names, header labels (Metrik/Nilai, Invoice/Total) and that the seeded sale invoice appears in Detail Transaksi. Export works for daily, monthly and custom range, returns 200 with empty-data sheets when the custom range has no data, and requires auth (401 without bearer). Per-item discount is accepted by POST /api/transactions (discount:1000 on a 2x15000 line → total 29000, matches subtotal math). Regression: POST /api/transactions, GET /products, GET /customers, GET /transactions?kind=sale all still work; no mongo _id leaks. Garbage custom dates (start=not-a-date) fall back gracefully to today (no 500). No critical or minor issues found for Fase-1.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/reports/summary?period=custom (invalid date)",
+        "issue": "When start/end fail to parse (e.g., 'not-a-date'), _parse_date returns None and the code silently falls back to today's start — no 400 is raised. Current behavior is a graceful 200, which the FE date-picker will probably never trigger, but a 400 would be more explicit. Non-blocking."
+      },
+      {
+        "endpoint": "GET /api/reports/products",
+        "issue": "revenue field is price*quantity and does NOT subtract item.discount, while GET /api/reports/export 'Per Produk' Omzet DOES subtract discount. Minor inconsistency between the detailed-report JSON and the exported xlsx aggregation. Non-blocking but worth aligning."
+      },
+      {
+        "endpoint": "(carried) /app/backend/pytest.ini",
+        "issue": "Still ships -n 2 --dist loadscope; full regression must use `-o addopts=` to avoid cross-worker races. Not an endpoint bug."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_custom_range_export.py",
+    "/app/test_reports/pytest/iteration10_results.xml",
+    "/app/test_reports/pytest/iteration10_full.xml"
+  ],
+  "action_items": [
+    "(Optional) Return 400 'Format tanggal tidak valid' when period=custom and start/end are provided but fail _parse_date, instead of silently falling back to today's start.",
+    "(Optional) Align Omzet/revenue between /reports/products (revenue = price*qty) and /reports/export Per Produk (Omzet = price*qty - discount). Pick one definition and apply consistently so the FE UI and the xlsx match.",
+    "(Carried) Split server.py (>1400 lines) into routers for maintainability.",
+    "(Carried) Remove or override `-n 2 --dist loadscope` default in pytest.ini — future agents must remember `-o addopts=` for full regression."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1041-1082 (_period_start/_parse_date/_period_range/_date_filter): clean helper trio. _parse_date accepts both YYYY-MM-DD and full ISO, applies 23:59:59.999999 for end-of-day — correct inclusive-range semantics. tzinfo defaulting to UTC matches now_iso() → inserted created_at values. Good.",
+    "server.py:709-755 report_summary: period=custom + optional start/end wired via _date_filter; status != cancelled filter preserved; cash_in/cash_out aggregate transactions + cash_entries over the same window. Correct.",
+    "server.py:1085-1204 report_products/customers/operators/sales-items: all four endpoints adopt the same _date_filter signature with Literal including 'custom'. ensure_permission('reports') gate preserved. sales-items supports optional operator_id + product_id filters — unchanged from iter-9.",
+    "server.py:1250-1389 export_reports: solid multi-sheet implementation. Uses pd.ExcelWriter + xlsxwriter engine. All 6 sheets written even when rows are empty (via `rows if rows else [{'(kosong)': ''}]`). Streams via StreamingResponse with correct media_type and Content-Disposition attachment. Filename includes period label and timestamp. No business_id leak.",
+    "server.py:349-425 create_transaction: per-item discount flows through: subtotal = sum(price*qty) - sum(item.discount); then global discount/tax/shipping on top. Verified with discount:1000 on a 2x15000 line → total 29000. Correct.",
+    "No MongoDB _id leaks observed in any report payload (all queries use {'_id': 0, 'business_id': 0}).",
+    "server.py:1077-1082: _date_filter returns {'$gte': s.isoformat()} and optionally {'$lte': e.isoformat()}. Since created_at is stored as isoformat() UTC strings, string comparison works correctly for both YYYY-MM-DD and full ISO formats. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter10_custom_range_export.py (NEW — 23 tests: 5 summary incl. custom + 8 detailed reports incl. custom + 5 export incl. xlsx sheet-parse + 5 regression)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 iter-10 isolated, 191/191 full regression serial run with `-o addopts=`)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Fresh TEST_Iter10 owner (iter10_<hex>/password123) via POST /api/auth/register, 1 TEST_Iter10 Kopi product (price 15000, cost 7000, stock 50), 1 cash sale (2 qty, discount 1000 per-item, total 29000), 1 regression second sale (qty 1, total 15000). All data isolated by business_id, no production impact.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for full 191-test regression (~52s). The `-o addopts=` flag REMAINS REQUIRED (pytest.ini pins -n 2 --dist loadscope which is unsafe for iter-5 state). Fase-1 smoke suite is test_iter10_custom_range_export.py — covers all custom-range report endpoints and the new xlsx export (sheet names, headers, invoice-in-Detail-Transaksi parsing with openpyxl). Added openpyxl to the venv so xlsx structural assertions work. If backend adds more Fase-N endpoints, extend TestReportsExport.EXPECTED_SHEETS and the sales-items/export schema assertions. Per-item discount through POST /api/transactions is verified at the subtotal level — if FE now exposes a UI discount field, no backend change is needed. In-app Buku Panduan Manual is pure FE content and has no backend coupling.",
+  "rca_of_issue": "N/A — feature verification iteration. All Fase-1 additions behave to spec: _date_filter correctly scopes queries by created_at ISO strings, _period_range maps period=custom to parsed start/end, _parse_date handles both YYYY-MM-DD and full ISO with UTC-defaulted tzinfo and inclusive end-of-day. The new /reports/export endpoint streams a well-formed xlsx with all 6 required sheets; openpyxl round-trip confirms sheet names, headers, and that the seeded sale invoice appears in Detail Transaksi. Zero regressions across 168 carry-over tests."
+}
