@@ -1,0 +1,67 @@
+{
+  "summary": "Iteration-5 backend-only testing for KasirKu Pro 13-feature session (2026-10). Full regression PASSES: 117/117 tests across backend/tests/ (86 carry-over + 31 new iter-5). New test suite /app/backend/tests/test_iter5_features.py covers all requested feature areas: product_type (goods|service) + base_unit + units[] persistence; service sale skips stock decrement; goods sale uses qty * unit_factor for stock delta (verified 2 Dus * factor 12 = 24 base units deducted); POST /api/transactions/{id}/cancel reverses stock, sets status=cancelled + cancel_reason + outstanding=0, 400 on re-cancel, 404 on nonexistent; GET /api/reports/summary|products|customers|operators all exclude cancelled transactions (status != cancelled filter verified end-to-end); new GET /api/reports/sales-items returns flat rows with all required fields (invoice_no, created_at, customer_name, operator_name, name, quantity, unit, price, subtotal) and supports operator_id + product_id filters; GET /api/products/export returns xlsx (correct media type, Content-Disposition attachment, 10 required columns, Tipe=Jasa/Barang mapping); PUT /api/settings header_lines & footer_lines accept max 4 (422 on 5), persist on GET; POST /api/parked requires customer_name (422 on empty, 200 with name); POST+PUT /api/customers persist price_level_id, GET list includes it. All regression endpoints green: health, auth/me, categories CRUD, payment-methods default seed (cash+credit+qris_static), cashflow create/list, shifts open/detail/close lifecycle, promos CRUD, parked list/delete.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PUT /api/settings",
+        "issue": "Spec says header_lines & footer_lines SHOULD strip empty/whitespace values before persisting, but backend stores them as-is. Reproduced: sending header_lines=['A','','  ','B'] round-trips verbatim via GET /api/settings. Spec quote: '...should strip empty values and persist'. Fix: in BusinessSettingsInput add @field_validator that filters '' and whitespace-only strings, or pre-process in update_settings (server.py:800-808). Max 4 constraint still works; current frontend likely compensates on render but backend contract is incorrect."
+      },
+      {
+        "endpoint": "POST /api/transactions (carry-over, not regressed)",
+        "issue": "Stock is still decremented BEFORE the insufficient-cash validation. If paid<grand for cash sale, 400 returned but stock already reduced and never rolled back (server.py:391-399 before line 389 check? Actually check at 389 is BEFORE the stock loop at 392, so OK — verified by re-reading: lines 389-399 run after validation at 389. Marking as RESOLVED on re-read)."
+      },
+      {
+        "endpoint": "POST /api/transactions/{id}/cancel",
+        "issue": "No idempotency guard on stock reversal: the endpoint relies solely on the status=='cancelled' pre-check at server.py:458. Concurrent double-cancel racing before the status update would both pass the pre-check and reverse stock twice. Low risk in single-operator flows but worth noting; use findOneAndUpdate conditional on status for atomicity."
+      },
+      {
+        "endpoint": "GET /api/reports/sales-items",
+        "issue": "Returns `profit` and `cost` fields but review request didn't require them. Not a bug; just extra data. All required fields are present."
+      },
+      {
+        "endpoint": "POST /api/transactions (reports/sales-items)",
+        "issue": "`subtotal` in sales-items row is computed as price*qty - discount, but the item.discount in TransactionItem is already subtracted at the transaction level too (item_discount_total at server.py:383). Double-counting of discount is NOT occurring in reports (confirmed by inspection), but overall receipt math is: subtotal(gross) - item_discount - global_discount. The sales-items row uses line-level net which is correct."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_features.py",
+    "/app/test_reports/pytest/iteration5_results.xml",
+    "/app/test_reports/pytest/iteration5_full.xml"
+  ],
+  "action_items": [
+    "(Minor) Add validator to BusinessSettingsInput to strip empty/whitespace strings from header_lines & footer_lines before persist (server.py:753-775). Spec item 12 & 13 (Header struk max 4, Footer struk max 4) imply only non-empty lines count.",
+    "(Carried over) Make OperatorInput.password Optional[str] so PUT /api/operators/{id} can keep existing password without supplying it.",
+    "(Carried over) Split server.py (now 1340 lines) into routers: auth, products, transactions, cash, contacts, operators, reports, settings, categories, payment_methods, parked, promos, shifts, backup.",
+    "(Nice-to-have) Use findOneAndUpdate with status=='active' precondition in POST /api/transactions/{id}/cancel to make stock reversal race-safe.",
+    "(Test hygiene) pytest.ini has `-n auto --dist loadscope` which breaks the iter-5 tests when they share pytest module attributes across workers. Fixed in test design by keeping ordered dependencies within a single class file; main agent/other tests fine. If adding more tests, consider using @pytest.fixture(scope='class') to pass IDs instead of pytest module attrs."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 1340 lines — still past the 700 soft limit; routers split overdue.",
+    "The new /api/products/export endpoint correctly excludes image_base64 from the Mongo projection (server.py:1043) — good for payload size.",
+    "/api/reports/sales-items (server.py:995-1036) correctly filters status!=cancelled and supports both operator_id and product_id filters; return shape matches spec (flat rows with invoice_no, created_at, customer_name, operator_name, name, quantity, unit, price, subtotal).",
+    "Cancel endpoint (server.py:453-479) correctly skips service products in stock reversal (line 465), uses unit_factor for base-unit conversion (line 467-468), and clears outstanding to 0 so cancelled debts drop off /api/debts.",
+    "ParkedTransactionInput.customer_name is Field(min_length=1) at server.py:113 — ensures 422 on empty name as required.",
+    "ProductInput now includes product_type Literal['goods','service'], base_unit str, units List[dict], prices dict[str,int] at server.py:62-76 — all persist on create/update verified via test_create_goods_persists_type_and_units.",
+    "BusinessSettingsInput header_lines/footer_lines have max_length=4 at server.py:758-759 — 422 on 5 verified. BUT no strip-empty validator; see minor issue above."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5_features.py (NEW, 31 tests covering all 13 new features + regression)"
+  ],
+  "success_rate": {
+    "backend": "100% (117/117 full regression; 31/31 iter-5 new; 86/86 iter-1..4 carry-over)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Per-run fresh owner iter5_<uuid> via /api/auth/register. Creates TEST_Iter5 Goods product (stock 100, Pcs+Dus multi-unit) and TEST_Iter5 Service product (product_type=service) under that business. Executes 1 service sale (2 Jam * 50k), 1 goods sale with Dus unit_factor=12 (later cancelled, verifying stock reversal), 1 active goods sale (3 Pcs * 10k), 1 pm_credit sale (then cancelled, verifying debt removal). Also creates TEST_Iter5 Cust customer with price_level_id grosir, 1 promo, 1 category, 1 cash entry, 1 shift. All data isolated per unique owner so re-runs don't collide.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` from /app for the full 117-test regression. If using the default addopts (-n auto --dist loadscope), iter-5 cancel/report tests may fail due to cross-worker pytest module-attribute coordination — run with `-o addopts=` to disable xdist for correct ordering. The 31 new iter-5 tests are strictly serial within classes. All 13 features of the 2026-10 session are green at the API layer. One minor backend contract gap: /api/settings does not strip empty/whitespace from header_lines/footer_lines (see minor issue). No critical bugs. Frontend not tested per request.",
+  "rca_of_issue": "N/A — this was a forward-testing iteration for 13 new features, not a bug-fix retest. All features implemented correctly at the API layer. The only deviation from spec is a minor one: /api/settings does not strip empty strings from header_lines/footer_lines arrays even though the review request bullet says 'should strip empty values and persist'. Reproduction: PUT /api/settings with header_lines=['A','','  ','B'] -> GET returns the same list verbatim. Mitigation: add a Pydantic @field_validator('header_lines','footer_lines') that returns [s.strip() for s in v if s and str(s).strip()] in BusinessSettingsInput, or do the same filter before $set in update_settings. All other 12 features behave to spec."
+}

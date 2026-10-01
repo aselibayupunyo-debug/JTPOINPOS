@@ -27,17 +27,19 @@ export type Product = {
   sku: string;
   barcode: string;
   category: string;
+  product_type?: "goods" | "service";
+  base_unit?: string;
   price: number;
   cost: number;
   prices?: Record<string, number>;
-  units?: { name: string; factor: number; barcode?: string }[];
+  units?: { name: string; factor: number; barcode?: string; price?: number }[];
   stock: number;
   min_stock: number;
   kitchen_print?: boolean;
   image_base64?: string | null;
 };
 
-export type CartItem = Product & { quantity: number; unit?: string; discount?: number };
+export type CartItem = Product & { quantity: number; line_id?: string; product_id?: string; unit?: string; unit_factor?: number; discount?: number };
 
 export type TransactionKind = "sale" | "purchase" | "sale_return" | "purchase_return";
 export type PaymentKind = "cash" | "credit" | "qris_static" | "custom";
@@ -62,7 +64,7 @@ export type ParkedTransaction = {
   customer_name: string;
   customer_id?: string | null;
   price_level_id: string;
-  items: { product_id: string; name: string; quantity: number; price: number; cost: number; unit?: string; discount?: number; kitchen_print?: boolean }[];
+  items: { product_id: string; name: string; quantity: number; price: number; cost: number; unit?: string; unit_factor?: number; discount?: number; kitchen_print?: boolean }[];
   note: string;
   discount_percent: number;
   discount_amount: number;
@@ -78,7 +80,7 @@ export type TransactionDoc = {
   transaction_type: TransactionKind;
   payment_method: PaymentMethod;
   payment_method_label?: string;
-  items: { product_id: string; name: string; quantity: number; price: number; cost: number; discount?: number; unit?: string; kitchen_print?: boolean }[];
+  items: { product_id: string; name: string; quantity: number; price: number; cost: number; discount?: number; unit?: string; unit_factor?: number; product_type?: "goods" | "service"; kitchen_print?: boolean }[];
   subtotal?: number;
   item_discount?: number;
   discount_percent?: number;
@@ -94,8 +96,12 @@ export type TransactionDoc = {
   customer_id?: string | null;
   supplier_id?: string | null;
   price_level_id?: string;
+  status?: "active" | "cancelled";
+  cancel_reason?: string;
+  cancelled_at?: string;
   note: string;
   created_at: string;
+  created_by?: string;
   created_by_name?: string;
 };
 
@@ -124,6 +130,7 @@ export type Contact = {
   address: string;
   note: string;
   price_level_id?: string;
+  price_level_name?: string;
   transaction_count?: number;
   total_spent?: number;
   outstanding?: number;
@@ -146,6 +153,23 @@ export type ReportSummary = {
 export type ProductReportRow = { product_id: string; name: string; quantity: number; revenue: number; profit: number };
 export type CustomerReportRow = { customer_id: string | null; customer_name: string; transaction_count: number; total_spent: number; outstanding: number; profit: number };
 export type OperatorReportRow = { operator_id: string | null; name: string; transaction_count: number; total_sales: number; profit: number };
+export type SalesItemRow = {
+  invoice_no: string;
+  transaction_id: string;
+  created_at: string;
+  customer_name: string;
+  operator_name: string;
+  operator_id: string | null;
+  product_id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  price: number;
+  discount: number;
+  subtotal: number;
+  cost: number;
+  profit: number;
+};
 
 export type IntegrationState = {
   qris: { configured: boolean };
@@ -158,6 +182,8 @@ export type BusinessSettings = {
   address: string;
   phone: string;
   footer_note: string;
+  header_lines?: string[];
+  footer_lines?: string[];
   logo_base64?: string | null;
   receipt_width: "58mm" | "80mm";
   whatsapp_number?: string;
@@ -278,6 +304,29 @@ export async function uploadProducts(file: { uri: string; name: string; mimeType
   return body as { imported: number };
 }
 
+/** Download products export (xlsx) as base64 for later saving via expo-file-system. */
+export async function downloadProductsExcel(): Promise<{ base64: string; filename: string }> {
+  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
+  const response = await fetch(`${baseUrl}/api/products/export`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!response.ok) {
+    const err = await response.text().catch(() => "");
+    throw new Error(err || "Gagal mengunduh file");
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const filename = match ? match[1] : `produk-${Date.now()}.xlsx`;
+  const buf = await response.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  // btoa is available on native (Hermes) via global polyfill
+  const base64 = btoa(binary);
+  return { base64, filename };
+}
+
 export function formatRupiah(value: number) {
   return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
 }
@@ -304,4 +353,33 @@ export const PAYMENT_LABELS: Record<string, string> = {
   cash: "Tunai",
   credit: "Kredit",
   qris_static: "QRIS Statis",
+};
+
+export type Promo = {
+  id: string;
+  name: string;
+  kind: "buy_x_get_y" | "bundle" | "percent";
+  conditions: { product_id: string; quantity: number }[];
+  reward: { kind: "free_item" | "percent_discount" | "fixed_price"; product_id?: string | null; quantity: number; percent: number; fixed_price: number };
+  active: boolean;
+  note: string;
+};
+
+export type Shift = {
+  id: string;
+  operator_id: string;
+  operator_name: string;
+  opening_cash: number;
+  closing_cash: number;
+  expected_cash: number;
+  difference: number;
+  sales_total: number;
+  cash_sales: number;
+  non_cash_sales: number;
+  cash_in?: number;
+  cash_out?: number;
+  transaction_count?: number;
+  opened_at: string;
+  closed_at?: string | null;
+  note: string;
 };

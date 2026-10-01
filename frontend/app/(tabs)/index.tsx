@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Print from "expo-print";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Image, Modal, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, ReportSummary, syncMutation } from "@/src/api";
+import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, Promo, ReportSummary, Shift, syncMutation } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
@@ -29,6 +30,8 @@ export default function KasirScreen() {
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
   const [parkedCount, setParkedCount] = useState(0);
   const [report, setReport] = useState<ReportSummary | null>(null);
+  const [promos, setPromos] = useState<Promo[]>([]);
+  const [shift, setShift] = useState<Shift | null>(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("Semua");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -37,20 +40,26 @@ export default function KasirScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [customer, setCustomer] = useState<Contact | null>(null);
   const [priceLevel, setPriceLevel] = useState<string>("default");
+  const [parkPromptOpen, setParkPromptOpen] = useState(false);
+  const [parkName, setParkName] = useState("");
   const [permission, requestPermission] = useCameraPermissions();
 
   const load = useCallback(async () => {
     try {
-      const [p, c, pm, s, parked, r] = await Promise.all([
+      const [p, c, pm, s, parked, r, promoList, curShift] = await Promise.all([
         cachedGet<Product[]>("/products"),
         cachedGet<Contact[]>("/customers"),
         cachedGet<PaymentMethodDoc[]>("/payment-methods"),
         cachedGet<BusinessSettings>("/settings"),
         cachedGet<ParkedTransaction[]>("/parked"),
         cachedGet<ReportSummary>("/reports/summary"),
+        cachedGet<Promo[]>("/promos"),
+        cachedGet<Shift | Record<string, never>>("/shifts/current"),
       ]);
       setProducts(p.data); setCustomers(c.data); setPaymentMethods(pm.data.filter((m) => m.enabled));
       setSettings(s.data); setParkedCount(parked.data.length); setReport(r.data);
+      setPromos(promoList.data.filter((pr) => pr.active));
+      setShift((curShift.data as Shift).id ? (curShift.data as Shift) : null);
     } catch (e) {
       toast.error("Gagal memuat data", e instanceof Error ? e.message : undefined);
     }
@@ -68,7 +77,9 @@ export default function KasirScreen() {
         if (!match) return;
         const resumed: CartItem[] = match.items.map((item) => {
           const prod = products.find((p) => p.id === item.product_id);
-          return prod ? { ...prod, quantity: item.quantity, unit: item.unit, discount: item.discount, price: item.price } as CartItem : null;
+          if (!prod) return null;
+          const unit = item.unit || prod.base_unit || "Pcs";
+          return { ...prod, line_id: `${prod.id}:${unit}`, product_id: prod.id, quantity: item.quantity, unit, unit_factor: item.unit_factor ?? 1, discount: item.discount, price: item.price } as CartItem;
         }).filter(Boolean) as CartItem[];
         setCart(resumed);
         setPriceLevel(match.price_level_id || "default");
@@ -84,6 +95,42 @@ export default function KasirScreen() {
   useEffect(() => {
     if (customer?.price_level_id) setPriceLevel(customer.price_level_id);
   }, [customer]);
+
+  const activePriceLevels = settings?.price_levels ?? [{ id: "default", name: "Harga Jual" }];
+
+  // Auto-apply promos: for buy_x_get_y, mark Y units of free product as discount == price
+  const appliedCart = useMemo<CartItem[]>(() => {
+    if (promos.length === 0 || cart.length === 0) return cart;
+    const next = cart.map((i) => ({ ...i, discount: 0 }));
+    const appliedIds: string[] = [];
+    for (const promo of promos) {
+      if (promo.kind === "buy_x_get_y") {
+        const cond = promo.conditions[0];
+        if (!cond) continue;
+        const buyLine = next.find((i) => i.id === cond.product_id);
+        if (!buyLine || buyLine.quantity < cond.quantity) continue;
+        const freeProductId = promo.reward.product_id || cond.product_id;
+        const freeLine = next.find((i) => i.id === freeProductId);
+        if (!freeLine) continue;
+        const bundles = Math.floor(buyLine.quantity / cond.quantity);
+        const freeUnits = Math.min(freeLine.quantity, bundles * promo.reward.quantity);
+        if (freeUnits > 0) {
+          freeLine.discount = (freeLine.discount ?? 0) + freeLine.price * freeUnits;
+          appliedIds.push(promo.id);
+        }
+      } else if (promo.kind === "percent") {
+        const cond = promo.conditions[0];
+        const line = next.find((i) => i.id === cond?.product_id);
+        if (line && line.quantity >= (cond?.quantity ?? 1)) {
+          line.discount = (line.discount ?? 0) + Math.round(line.price * line.quantity * (promo.reward.percent / 100));
+          appliedIds.push(promo.id);
+        }
+      }
+    }
+    return next.map((item) => ({ ...item, _appliedPromos: appliedIds } as CartItem));
+  }, [cart, promos]);
+  const appliedPromoIds = Array.from(new Set((appliedCart[0] as unknown as { _appliedPromos?: string[] })?._appliedPromos ?? []));
+  const appliedPromoNames = promos.filter((p) => appliedPromoIds.includes(p.id)).map((p) => p.name);
 
   if (!can("sales")) {
     return (
@@ -105,17 +152,33 @@ export default function KasirScreen() {
   const totalCart = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   const addToCart = (product: Product) => {
-    if (product.stock <= 0) return toast.error("Stok habis", product.name);
+    if (product.product_type !== "service" && product.stock <= 0) return toast.error("Stok habis", product.name);
     const priceAtLevel = priceOf(product);
-    setCart((current) => {
-      const exists = current.find((item) => item.id === product.id);
-      if (exists) return current.map((item) => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
-      return [...current, { ...product, quantity: 1, price: priceAtLevel }];
-    });
+    const addLine = (unit: string, factor: number, unitPrice: number) => {
+      setCart((current) => {
+        const lineId = `${product.id}:${unit}`;
+        const exists = current.find((item) => item.line_id === lineId);
+        if (exists) return current.map((item) => item.line_id === lineId ? { ...item, quantity: item.quantity + 1 } : item);
+        return [...current, { ...product, line_id: lineId, product_id: product.id, quantity: 1, price: unitPrice, unit, unit_factor: factor } as CartItem];
+      });
+    };
+    const hasUnits = (product.units ?? []).length > 0;
+    if (hasUnits) {
+      const unitValues: { name: string; factor: number; price: number }[] = [
+        { name: product.base_unit ?? "Pcs", factor: 1, price: priceAtLevel },
+        ...(product.units ?? []).map((u) => ({ name: u.name, factor: u.factor, price: u.price || priceAtLevel * u.factor })),
+      ];
+      Alert.alert(product.name, "Pilih satuan", [
+        ...unitValues.map((u) => ({ text: `${u.name} (×${u.factor}) · ${formatRupiah(u.price)}`, onPress: () => addLine(u.name, u.factor, u.price) })),
+        { text: "Batal", style: "cancel" as const },
+      ]);
+      return;
+    }
+    addLine(product.base_unit ?? "Pcs", 1, priceAtLevel);
   };
-  const changeQty = (id: string, delta: number) => setCart((c) => c.map((i) => i.id === id ? { ...i, quantity: i.quantity + delta } : i).filter((i) => i.quantity > 0));
-  const changePrice = (id: string, nextPrice: number) => setCart((c) => c.map((i) => i.id === id ? { ...i, price: nextPrice } : i));
-  const removeFromCart = (id: string) => setCart((c) => c.filter((i) => i.id !== id));
+  const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: i.quantity + delta } : i).filter((i) => i.quantity > 0));
+  const changePrice = (lineId: string, nextPrice: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, price: nextPrice } : i));
+  const removeFromCart = (lineId: string) => setCart((c) => c.filter((i) => i.line_id !== lineId));
 
   const openScanner = async () => {
     if (!permission?.granted) {
@@ -132,24 +195,66 @@ export default function KasirScreen() {
     if (match) addToCart(match); else toast.info("Barcode belum terdaftar", data);
   };
 
+  const printQueueTicket = async (parked: ParkedTransaction, s: BusinessSettings | null) => {
+    try {
+      const biz = s?.business_name || user?.business_name || "Toko";
+      const header = (s?.header_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
+      const items = parked.items.map((i) => `<tr><td>${i.name}${i.unit ? ` (${i.unit})` : ""}</td><td style="text-align:right">${i.quantity}</td></tr>`).join("");
+      const total = parked.items.reduce((a, b) => a + b.price * b.quantity, 0);
+      const html = `<!doctype html><html><head><meta charset="utf-8" /><style>
+        body { font-family: -apple-system, Arial, sans-serif; width: 58mm; padding: 6px; }
+        .center { text-align:center; }
+        .big { font-size: 44px; font-weight: 900; letter-spacing: 2px; margin: 10px 0; }
+        .biz { font-size: 14px; font-weight: 800; }
+        .meta { font-size: 10px; color: #333; }
+        table { width: 100%; border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin-top: 6px; }
+        td { font-size: 10px; padding: 1px 0; }
+        .footer { font-size: 10px; text-align: center; margin-top: 6px; }
+      </style></head><body>
+        <div class="center biz">${biz}</div>
+        <div class="center meta">${header}</div>
+        <div class="center meta">${new Date(parked.created_at).toLocaleString("id-ID")}</div>
+        <div class="center" style="font-size:11px;margin-top:8px">NOMOR ANTRIAN</div>
+        <div class="center big">${(parked.label || parked.customer_name).slice(0, 20)}</div>
+        <div class="center meta">Atas nama: <b>${parked.customer_name}</b></div>
+        <table><tbody>${items}</tbody></table>
+        <div class="meta" style="text-align:right;margin-top:4px">Perkiraan: ${formatRupiah(total)}</div>
+        <div class="footer">Simpan struk ini untuk melanjutkan transaksi.</div>
+      </body></html>`;
+      await Print.printAsync({ html });
+    } catch (e) {
+      toast.error("Cetak gagal", e instanceof Error ? e.message : undefined);
+    }
+  };
+
   const parkTransaction = async () => {
     if (cart.length === 0) return;
+    if (customer?.name) return doPark(customer.name);
+    setParkName("");
+    setParkPromptOpen(true);
+  };
+
+  const doPark = async (name: string) => {
     try {
-      await apiRequest("/parked", {
-        method: "POST",
-        body: JSON.stringify({
-          label: `Antrian ${new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`,
-          customer_name: customer?.name ?? "Umum",
-          customer_id: customer?.id ?? null,
-          price_level_id: priceLevel,
-          items: cart.map((i) => ({ product_id: i.id, name: i.name, quantity: i.quantity, price: i.price, cost: i.cost, unit: i.unit ?? "", discount: i.discount ?? 0 })),
-          note: "",
-          discount_percent: 0, discount_amount: 0, tax_percent: 0, shipping: 0,
-        }),
-      });
-      toast.success("Transaksi diparkir", "Buka menu Antrian untuk melanjutkan.");
+      const totalPark = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+      const payload = {
+        label: `Antrian ${new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`,
+        customer_name: name,
+        customer_id: customer?.id ?? null,
+        price_level_id: priceLevel,
+        items: cart.map((i) => ({ product_id: i.product_id ?? i.id, name: i.name, quantity: i.quantity, price: i.price, cost: i.cost, unit: i.unit ?? "", unit_factor: i.unit_factor ?? 1, discount: i.discount ?? 0 })),
+        note: "",
+        discount_percent: 0, discount_amount: 0, tax_percent: 0, shipping: 0,
+      };
+      const parked = await apiRequest<ParkedTransaction>("/parked", { method: "POST", body: JSON.stringify(payload) });
+      toast.success("Transaksi diparkir", `${name} · ${formatRupiah(totalPark)}`);
       setCart([]); setCustomer(null);
       setParkedCount((n) => n + 1);
+      setParkPromptOpen(false);
+      Alert.alert("Cetak struk antrian?", `Antrian atas nama ${name}.`, [
+        { text: "Nanti saja", style: "cancel" },
+        { text: "Cetak sekarang", onPress: () => printQueueTicket(parked, settings) },
+      ]);
     } catch (e) {
       toast.error("Gagal park", e instanceof Error ? e.message : undefined);
     }
@@ -165,8 +270,6 @@ export default function KasirScreen() {
       ]);
     } else { doCancel(); }
   };
-
-  const activePriceLevels = settings?.price_levels ?? [{ id: "default", name: "Harga Jual" }];
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -248,8 +351,9 @@ export default function KasirScreen() {
         <View style={{ position: "absolute", left: 20, right: 20, bottom: insets.bottom + 70, backgroundColor: colors.surfaceInverse, borderRadius: 20, padding: 16 }}>
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.onSurfaceInverse, fontSize: 13, fontWeight: "700" }}>{cart.reduce((s, i) => s + i.quantity, 0)} item{customer ? ` · ${customer.name}` : ""}</Text>
+              <Text style={{ color: colors.onSurfaceInverse, fontSize: 13, fontWeight: "700" }}>{cart.reduce((s, i) => s + i.quantity, 0)} item{customer ? ` · ${customer.name}` : ""}{shift ? ` · Shift aktif` : ""}</Text>
               <Text style={{ color: colors.onSurfaceInverse, fontSize: 18, fontWeight: "800", marginTop: 3 }}>{formatRupiah(totalCart)}</Text>
+              {appliedPromoNames.length > 0 ? <Text style={{ color: colors.onBrandPrimary, fontSize: 11, fontWeight: "800", marginTop: 2 }}>🎁 {appliedPromoNames.join(" · ")}</Text> : null}
             </View>
             <Pressable testID="checkout-button" onPress={() => setCheckout(true)} style={styles.primaryButton}>
               <Text style={styles.primaryButtonText}>Bayar</Text>
@@ -291,10 +395,44 @@ export default function KasirScreen() {
         </View>
       </Modal>
 
+      <Modal visible={parkPromptOpen} transparent animationType="fade" onRequestClose={() => setParkPromptOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
+            <Text style={styles.cardTitle}>Nama pelanggan antrian</Text>
+            <Text style={[styles.muted, { marginTop: 6, marginBottom: 10 }]}>Antrian wajib memiliki nama agar tidak tertukar.</Text>
+            <TextInput
+              testID="park-name-input"
+              autoFocus
+              value={parkName}
+              onChangeText={setParkName}
+              placeholder="Contoh: Pak Budi / Meja 3"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+              <Pressable onPress={() => setParkPromptOpen(false)} style={[styles.outlineButton, { flex: 1 }]}>
+                <Text style={styles.outlineText}>Batal</Text>
+              </Pressable>
+              <Pressable
+                testID="park-name-save"
+                onPress={() => {
+                  const n = parkName.trim();
+                  if (!n) return toast.error("Nama wajib diisi");
+                  doPark(n);
+                }}
+                style={[styles.primaryButton, { flex: 1 }]}
+              >
+                <Text style={styles.primaryButtonText}>Simpan antrian</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <CheckoutSheet
         visible={checkout}
         onClose={() => setCheckout(false)}
-        cart={cart}
+        cart={appliedCart}
         customers={customers}
         customer={customer}
         setCustomer={setCustomer}
@@ -316,8 +454,10 @@ export default function KasirScreen() {
               price_level_id: priceLevel,
               discount_percent: discountPct, discount_amount: discountAmt,
               tax_percent: taxPct, shipping,
+              shift_id: shift?.id ?? null,
+              promo_ids: appliedPromoIds,
               note,
-              items: cart.map((item) => ({ product_id: item.id, name: item.name, quantity: item.quantity, price: item.price, cost: item.cost, discount: item.discount ?? 0, unit: item.unit ?? "", kitchen_print: !!item.kitchen_print })),
+              items: appliedCart.map((item) => ({ product_id: item.product_id ?? item.id, name: item.name, quantity: item.quantity, price: item.price, cost: item.cost, discount: item.discount ?? 0, unit: item.unit ?? "", unit_factor: item.unit_factor ?? 1, product_type: item.product_type ?? "goods", kitchen_print: !!item.kitchen_print })),
             });
             if (result.queued) {
               toast.info("Transaksi disimpan offline", "Akan dikirim otomatis saat online.");
@@ -418,38 +558,40 @@ function CheckoutSheet({
               <Text style={[styles.title, { fontSize: 22 }]}>Pembayaran</Text>
               <Pressable testID="close-checkout" onPress={onClose}><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>
             </View>
-            {cart.map((item) => (
-              <View key={item.id} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+            {cart.map((item) => {
+              const key = item.line_id ?? item.id;
+              return (
+              <View key={key} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                 <View style={styles.between}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{item.name}</Text>
-                    {editing === item.id && (settings?.allow_price_edit ?? true) ? (
+                    <Text style={styles.productName}>{item.name}{item.unit ? ` · ${item.unit}` : ""}</Text>
+                    {editing === key && (settings?.allow_price_edit ?? true) ? (
                       <View style={[styles.row, { marginTop: 6 }]}>
                         <TextInput
-                          testID={`edit-price-${item.id}`}
+                          testID={`edit-price-${key}`}
                           keyboardType="number-pad"
                           autoFocus
                           defaultValue={String(item.price)}
-                          onBlur={(e) => { changePrice(item.id, Number(e.nativeEvent.text.replace(/\D/g, "")) || item.price); setEditing(null); }}
-                          onSubmitEditing={(e) => { changePrice(item.id, Number(e.nativeEvent.text.replace(/\D/g, "")) || item.price); setEditing(null); }}
+                          onBlur={(e) => { changePrice(key, Number(e.nativeEvent.text.replace(/\D/g, "")) || item.price); setEditing(null); }}
+                          onSubmitEditing={(e) => { changePrice(key, Number(e.nativeEvent.text.replace(/\D/g, "")) || item.price); setEditing(null); }}
                           style={[styles.input, { marginBottom: 0, flex: 1, minHeight: 36 }]}
                         />
                       </View>
                     ) : (
-                      <Pressable onPress={() => (settings?.allow_price_edit ?? true) && setEditing(item.id)}>
+                      <Pressable onPress={() => (settings?.allow_price_edit ?? true) && setEditing(key)}>
                         <Text style={styles.muted}>{formatRupiah(item.price)} × {item.quantity}{(settings?.allow_price_edit ?? true) ? " · ketuk harga" : ""}</Text>
                       </Pressable>
                     )}
                   </View>
                   <View style={styles.row}>
-                    <Pressable testID={`qty-minus-${item.id}`} onPress={() => changeQty(item.id, -1)} style={styles.iconButton}><Ionicons name="remove" size={18} color={colors.brandPrimary} /></Pressable>
+                    <Pressable testID={`qty-minus-${key}`} onPress={() => changeQty(key, -1)} style={styles.iconButton}><Ionicons name="remove" size={18} color={colors.brandPrimary} /></Pressable>
                     <Text style={{ width: 28, textAlign: "center", color: colors.onSurface, fontWeight: "700" }}>{item.quantity}</Text>
-                    <Pressable testID={`qty-plus-${item.id}`} onPress={() => changeQty(item.id, 1)} style={styles.iconButton}><Ionicons name="add" size={18} color={colors.brandPrimary} /></Pressable>
-                    <Pressable testID={`remove-${item.id}`} onPress={() => removeFromCart(item.id)} style={{ marginLeft: 6 }}><Ionicons name="trash-outline" size={18} color={colors.error} /></Pressable>
+                    <Pressable testID={`qty-plus-${key}`} onPress={() => changeQty(key, 1)} style={styles.iconButton}><Ionicons name="add" size={18} color={colors.brandPrimary} /></Pressable>
+                    <Pressable testID={`remove-${key}`} onPress={() => removeFromCart(key)} style={{ marginLeft: 6 }}><Ionicons name="trash-outline" size={18} color={colors.error} /></Pressable>
                   </View>
                 </View>
               </View>
-            ))}
+            );})}
 
             <View style={{ marginTop: 14 }}>
               {totals.map((t) => (

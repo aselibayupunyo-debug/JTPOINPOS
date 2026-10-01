@@ -1,11 +1,13 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, formatRupiah, Product, uploadProducts } from "@/src/api";
+import { apiRequest, downloadProductsExcel, formatRupiah, Product, uploadProducts } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
@@ -53,6 +55,27 @@ export default function StokScreen() {
     }
   };
 
+  const exportExcel = async () => {
+    try {
+      if (Platform.OS === "web") return toast.info("Export Excel di web", "Fitur export otomatis buka file.xlsx di aplikasi mobile. Di web, gunakan menu share browser.");
+      const { base64, filename } = await downloadProductsExcel();
+      const dir = FileSystem.cacheDirectory ?? "";
+      const path = `${dir}${filename}`;
+      await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(path, {
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          dialogTitle: "Bagikan katalog produk",
+          UTI: "org.openxmlformats.spreadsheetml.sheet",
+        });
+      } else {
+        toast.success("File tersimpan", path);
+      }
+    } catch (e) {
+      toast.error("Export gagal", e instanceof Error ? e.message : undefined);
+    }
+  };
+
   const askDelete = (product: Product) => {
     Alert.alert("Hapus produk?", product.name, [
       { text: "Batal", style: "cancel" },
@@ -92,9 +115,14 @@ export default function StokScreen() {
               <Text style={styles.muted}>Tambah, edit, atau import Excel.</Text>
             </View>
             {can("inventory") ? (
-              <Pressable testID="import-excel-button" onPress={importExcel} style={styles.outlineButton}>
-                <Text style={styles.outlineText}>Import</Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <Pressable testID="export-excel-button" onPress={exportExcel} style={styles.outlineButton}>
+                  <Text style={styles.outlineText}>Export</Text>
+                </Pressable>
+                <Pressable testID="import-excel-button" onPress={importExcel} style={styles.outlineButton}>
+                  <Text style={styles.outlineText}>Import</Text>
+                </Pressable>
+              </View>
             ) : null}
           </View>
           {shown.length ? shown.map((p) => (
@@ -106,14 +134,20 @@ export default function StokScreen() {
               style={styles.listRow}
             >
               <View style={{ flex: 1 }}>
-                <Text style={styles.productName}>{p.name}</Text>
+                <Text style={styles.productName}>{p.name}{p.product_type === "service" ? " · Jasa" : ""}</Text>
                 <Text style={styles.muted}>{p.category} · Jual {formatRupiah(p.price)}{p.cost ? ` · Pokok ${formatRupiah(p.cost)}` : ""}</Text>
-                <Text style={[styles.muted, { marginTop: 3 }]}>{p.barcode || p.sku || "Tanpa kode"}</Text>
+                <Text style={[styles.muted, { marginTop: 3 }]}>{p.barcode || p.sku || "Tanpa kode"}{p.base_unit ? ` · ${p.base_unit}` : ""}{(p.units ?? []).length ? ` · multi-satuan` : ""}</Text>
               </View>
               <View style={{ alignItems: "flex-end" }}>
-                <View style={[styles.badge, { backgroundColor: p.stock === 0 ? colors.surfaceTertiary : p.stock <= p.min_stock ? colors.surfaceTertiary : colors.brandTertiary }]}>
-                  <Text style={[styles.badgeText, p.stock === 0 && { color: colors.error }, p.stock > 0 && p.stock <= p.min_stock && { color: colors.warning }]}>{p.stock} stok</Text>
-                </View>
+                {p.product_type === "service" ? (
+                  <View style={[styles.badge, { backgroundColor: colors.brandTertiary }]}>
+                    <Text style={[styles.badgeText, { color: colors.brandPrimary }]}>Jasa</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.badge, { backgroundColor: p.stock === 0 ? colors.surfaceTertiary : p.stock <= p.min_stock ? colors.surfaceTertiary : colors.brandTertiary }]}>
+                    <Text style={[styles.badgeText, p.stock === 0 && { color: colors.error }, p.stock > 0 && p.stock <= p.min_stock && { color: colors.warning }]}>{p.stock} stok</Text>
+                  </View>
+                )}
                 <Ionicons name="chevron-forward" size={18} color={colors.muted} />
               </View>
             </Pressable>

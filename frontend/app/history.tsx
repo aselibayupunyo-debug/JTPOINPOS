@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
+import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -19,13 +20,41 @@ export default function HistoryScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const { user } = useAuth();
   const [list, setList] = useState<TransactionDoc[]>([]);
   const [filter, setFilter] = useState<"all" | TransactionDoc["transaction_type"]>("all");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const path = filter === "all" ? "/transactions?limit=100" : `/transactions?kind=${filter}&limit=100`;
     apiRequest<TransactionDoc[]>(path).then(setList).catch((e) => toast.error("Gagal memuat", e instanceof Error ? e.message : undefined));
   }, [filter, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const askCancel = (tx: TransactionDoc) => {
+    Alert.alert(
+      "Batalkan transaksi?",
+      `${tx.invoice_no} akan dibatalkan. Stok akan dikembalikan dan transaksi dikeluarkan dari laporan.`,
+      [
+        { text: "Tidak", style: "cancel" },
+        {
+          text: "Ya, batalkan",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await apiRequest(`/transactions/${tx.id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "" }) });
+              toast.success("Transaksi dibatalkan", tx.invoice_no);
+              load();
+            } catch (e) {
+              toast.error("Gagal membatalkan", e instanceof Error ? e.message : undefined);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const canCancel = (tx: TransactionDoc) => user?.role === "owner" || user?.role === "manager" || tx.created_by === user?.id;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -52,24 +81,38 @@ export default function HistoryScreen() {
             <Ionicons name="document-text-outline" size={44} color={colors.muted} />
             <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada transaksi.</Text>
           </View>
-        ) : list.map((tx) => (
-          <View key={tx.id} style={styles.card}>
-            <View style={styles.between}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.productName}>{KIND_LABEL[tx.transaction_type]} · {tx.invoice_no}</Text>
-                <Text style={styles.muted}>{tx.customer_name} · {new Date(tx.created_at).toLocaleString("id-ID")}</Text>
-                <Text style={[styles.muted, { marginTop: 4 }]}>{tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method}{tx.outstanding > 0 ? ` · Sisa ${formatRupiah(tx.outstanding)}` : ""}</Text>
+        ) : list.map((tx) => {
+          const cancelled = tx.status === "cancelled";
+          return (
+            <View key={tx.id} style={[styles.card, cancelled && { opacity: 0.6 }]}>
+              <View style={styles.between}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.productName}>
+                    {KIND_LABEL[tx.transaction_type]} · {tx.invoice_no}
+                    {cancelled ? "  (DIBATALKAN)" : ""}
+                  </Text>
+                  <Text style={styles.muted}>{tx.customer_name} · {new Date(tx.created_at).toLocaleString("id-ID")}</Text>
+                  <Text style={[styles.muted, { marginTop: 4 }]}>{tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method}{tx.outstanding > 0 ? ` · Sisa ${formatRupiah(tx.outstanding)}` : ""}</Text>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={[styles.cardTitle, { color: cancelled ? colors.muted : colors.brandPrimary }]}>{formatRupiah(tx.total)}</Text>
+                  <Text style={styles.muted}>{tx.items.length} item</Text>
+                </View>
               </View>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={[styles.cardTitle, { color: colors.brandPrimary }]}>{formatRupiah(tx.total)}</Text>
-                <Text style={styles.muted}>{tx.items.length} item</Text>
-              </View>
+              <Pressable testID={`reprint-${tx.id}`} onPress={() => router.push({ pathname: "/receipt", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 10 }]}>
+                <Text style={styles.outlineText}>Cetak ulang / Lihat struk</Text>
+              </Pressable>
+              <Pressable testID={`invoice-${tx.id}`} onPress={() => router.push({ pathname: "/invoice", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 8 }]}>
+                <Text style={styles.outlineText}>Invoice PDF (A4)</Text>
+              </Pressable>
+              {!cancelled && canCancel(tx) ? (
+                <Pressable testID={`cancel-tx-${tx.id}`} onPress={() => askCancel(tx)} style={[styles.dangerButton, { marginTop: 8 }]}>
+                  <Text style={styles.dangerText}>Batalkan transaksi</Text>
+                </Pressable>
+              ) : null}
             </View>
-            <Pressable testID={`reprint-${tx.id}`} onPress={() => router.push({ pathname: "/receipt", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 10 }]}>
-              <Text style={styles.outlineText}>Cetak ulang / Lihat struk</Text>
-            </Pressable>
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
     </View>
   );

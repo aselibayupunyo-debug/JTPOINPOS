@@ -32,16 +32,32 @@ export default function SettingsScreen() {
     if (!settings) return;
     setBusy(true);
     try {
-      const next = await apiRequest<BusinessSettings>("/settings", { method: "PUT", body: JSON.stringify(settings) });
+      // normalize: trim and strip empty rows
+      const header_lines = (settings.header_lines ?? []).map((l) => (l ?? "").trim()).filter(Boolean).slice(0, 4);
+      const footer_lines = (settings.footer_lines ?? []).map((l) => (l ?? "").trim()).filter(Boolean).slice(0, 4);
+      const next = await apiRequest<BusinessSettings>("/settings", { method: "PUT", body: JSON.stringify({ ...settings, header_lines, footer_lines }) });
       setSettings(next);
       toast.success("Pengaturan tersimpan");
     } catch (e) { toast.error("Gagal menyimpan", e instanceof Error ? e.message : undefined); }
     finally { setBusy(false); }
   };
 
+  const updateLine = (field: "header_lines" | "footer_lines", idx: number, value: string) => {
+    setSettings((s) => {
+      if (!s) return s;
+      const arr = [...(s[field] ?? ["", "", "", ""])];
+      while (arr.length < 4) arr.push("");
+      arr[idx] = value;
+      return { ...s, [field]: arr.slice(0, 4) };
+    });
+  };
+
   if (!settings) {
     return <View style={[styles.screen, { paddingTop: insets.top, alignItems: "center", justifyContent: "center" }]}><ActivityIndicator color={colors.brandPrimary} /></View>;
   }
+
+  const header = (settings.header_lines ?? ["", "", "", ""]).concat(["", "", "", ""]).slice(0, 4);
+  const footer = (settings.footer_lines ?? ["", "", "", ""]).concat(["", "", "", ""]).slice(0, 4);
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -70,6 +86,36 @@ export default function SettingsScreen() {
           <TextInput testID="set-whatsapp" keyboardType="phone-pad" value={settings.whatsapp_number ?? ""} onChangeText={(t) => setSettings((s) => s ? { ...s, whatsapp_number: t } : s)} style={styles.input} placeholder="62812…" placeholderTextColor={colors.muted} />
         </View>
         <View style={styles.card}>
+          <Text style={styles.cardTitle}>Header struk</Text>
+          <Text style={[styles.muted, { marginBottom: 10 }]}>Maksimal 4 baris. Tampil di bagian atas setiap struk.</Text>
+          {[0, 1, 2, 3].map((i) => (
+            <TextInput
+              key={`h${i}`}
+              testID={`header-line-${i}`}
+              value={header[i]}
+              onChangeText={(t) => updateLine("header_lines", i, t)}
+              style={styles.input}
+              placeholder={`Baris ${i + 1}`}
+              placeholderTextColor={colors.muted}
+            />
+          ))}
+        </View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Footer struk</Text>
+          <Text style={[styles.muted, { marginBottom: 10 }]}>Maksimal 4 baris. Tampil di bagian bawah struk.</Text>
+          {[0, 1, 2, 3].map((i) => (
+            <TextInput
+              key={`f${i}`}
+              testID={`footer-line-${i}`}
+              value={footer[i]}
+              onChangeText={(t) => updateLine("footer_lines", i, t)}
+              style={styles.input}
+              placeholder={`Baris ${i + 1}`}
+              placeholderTextColor={colors.muted}
+            />
+          ))}
+        </View>
+        <View style={styles.card}>
           <Text style={styles.cardTitle}>Struk thermal</Text>
           <Text style={[styles.muted, { marginBottom: 10 }]}>Pilih lebar kertas default.</Text>
           <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
@@ -79,8 +125,6 @@ export default function SettingsScreen() {
               </Pressable>
             ))}
           </View>
-          <Text style={styles.inputLabel}>Catatan kaki struk</Text>
-          <TextInput value={settings.footer_note} onChangeText={(t) => setSettings((s) => s ? { ...s, footer_note: t } : s)} style={styles.input} placeholder="Terima kasih atas kunjungan Anda" placeholderTextColor={colors.muted} />
           <View style={{ padding: 12, backgroundColor: colors.surfaceTertiary, borderRadius: 12 }}>
             <Text style={styles.productName}>Printer Bluetooth</Text>
             <Text style={[styles.muted, { marginTop: 4 }]}>Dukungan ESC/POS 58mm & 80mm, logo, dan multi-printer dapur aktif pada build Android produksi. Deploy aplikasi lewat tombol Publish untuk mengaktifkan.</Text>

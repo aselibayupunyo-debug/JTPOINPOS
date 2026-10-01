@@ -1,67 +1,38 @@
-# KasirKu Pro — Product Requirements
+# KasirKu Pro — Product Requirements (Updated 2026-10)
 
-## Ringkasan
-Aplikasi kasir Android berbasis Expo React Native + FastAPI + MongoDB. Semua modul (penjualan, pembelian, retur, arus kas, hutang, piutang, pelanggan, supplier, laporan) saling terhubung, **tanpa batas** jumlah produk/transaksi, dengan **cache SQLite offline-first** + mode **LAN** (satu perangkat jadi server, lainnya terhubung via Wi-Fi lokal).
+Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to FastAPI/MongoDB).
 
-## Modul Utama
-- **Auth bisnis**: register pemilik, login JWT 14 hari
-- **Produk**: tambah/edit/hapus, foto, barcode, harga pokok, stok, min_stock, kategori, kitchen print toggle, **multi-harga per level (level harga)**, **multi-satuan**
-- **Kasir**: pencarian, scan barcode, keranjang, **park/antri transaksi**, **batal transaksi**, **ubah harga manual** oleh kasir, filter kategori + filter level harga
-- **Checkout detail**: 
-  - Metode pembayaran customizable (default: Tunai, Kredit, QRIS Statis) + bisa tambah/edit/hapus metode kustom
-  - **QRIS statis** tampil gambar QR yang di-upload admin
-  - Pembayaran tunai: default uang diterima = total; **pilihan cepat 50k/100k/150k/200k/250k/300k/uang pas** + input manual
-  - Diskon per-item + diskon global (% atau nominal) + pajak % + ongkir
-  - Pilih pelanggan (dengan default level harga pelanggan auto-apply)
-  - Tombol Park & Batal langsung di checkout
-- **Pembelian**: pilih supplier dari daftar, catat barang masuk, cash/kredit
-- **Retur**: retur penjualan & retur pembelian
-- **Arus kas**: kas masuk/keluar manual, saldo real-time
-- **Hutang & Piutang**: list kredit aktif, pelunasan parsial/penuh, auto-record cash entry
-- **Pelanggan**: CRUD + statistik otomatis + **default price_level_id**
-- **Supplier**: CRUD + statistik
-- **Antrian transaksi**: list parked transactions, lanjutkan atau hapus
-- **Riwayat transaksi**: filter per jenis + **tombol cetak ulang struk**
-- **Kategori barang**: CRUD customizable
-- **Metode pembayaran**: CRUD; QRIS statis upload gambar; toggle enabled; default pm_cash/pm_credit/pm_qris terkunci dari delete
-- **Pengaturan transaksi**: pajak default, ongkir default, label pajak, toggle allow_price_edit, toggle confirm_cancel, toggle auto_park_on_cancel, toggle cashdrawer, toggle multi_printer, kelola level harga
-- **Operator & kewenangan**: 9 permissions
-- **Backup & Restore (ZIP)**: ekspor semua data termasuk settings & payment methods ke .zip; restore ganti seluruh data
-- **Pengaturan toko & struk**: logo, lebar 58/80mm, WhatsApp, nomor pengirim
-- **Struk**: preview rapi dengan rincian subtotal/diskon/pajak/ongkir/total; share WhatsApp deeplink / share lainnya
-- **Import Excel/CSV**: kolom fleksibel ID atau EN
+## Features implemented
+- **Core POS**: Sales, Purchases, Sale/Purchase Returns, Cashflow, Stock, Debts (receivable/payable).
+- **Transactions**: cash/credit/custom payment methods, static QRIS image, discounts (%/Rp), tax, shipping, per-item discount, parked (antrian), **cancel transaction (void) with stock revert and report exclusion**.
+- **Products**: name, SKU, barcode, categories (custom), image, HPP cost, selling price, price levels, min stock. **New: product_type (Barang/Jasa) — services skip stock. base_unit + multi-unit (Dus/Lusin) with factor conversion; stock stored in base unit.**
+- **Customers & Suppliers**: with reporting, outstanding tracking, **price_level_id linked to customer (auto-applies at Kasir).**
+- **Antrian (Parked)**: **wajib nama pelanggan**, cetak **struk antrian** thermal (nomor besar), hanya hilang bila dilanjutkan atau dibatalkan (tombol eksplisit).
+- **Reports**: Daily/Monthly/Yearly summary (**metric tappable → detail modal**), per-product, per-customer, per-operator (**operator tappable → list barang terjual**), **detail barang terjual (tanggal+jam)**, send PDF per report, WhatsApp text share.
+- **Receipt**: thermal 58/80mm, **header 4 baris + footer 4 baris**, logo, kirim via WhatsApp, **kirim sebagai JPEG** (view-shot), kirim text.
+- **Invoice**: PDF A4 via expo-print + email/WhatsApp.
+- **Barcode**: cetak lembar label dengan bwip-js.
+- **Shift Kasir**: open/close shift dengan saldo awal/akhir.
+- **Promo Paket**: Buy X Get Y, bundle, diskon qty.
+- **Export/Import Produk**: **Export Excel .xlsx** (openpyxl/xlsxwriter) + Import CSV/XLSX.
+- **Backup/Restore**: ZIP full backup JSON.
+- **Users**: Owner/Manager/Cashier dengan permission granular.
 
-## Laporan
-- **Ringkasan**: harian/bulanan/tahunan — penjualan, laba kotor, pembelian, saldo kas, piutang, hutang
-- **Per Produk**: quantity, revenue, laba (sorted by laba desc)
-- **Per Pelanggan**: jumlah transaksi, total belanja, outstanding, laba
-- **Per Operator/Karyawan**: jumlah transaksi, total penjualan, laba
+## Tech
+- Backend: FastAPI + MongoDB (motor) + pandas/openpyxl/xlsxwriter for Excel export + JWT auth + bcrypt.
+- Frontend: Expo SDK, expo-router, expo-sqlite (offline), expo-print (PDF), expo-camera (barcode scan), bwip-js (barcode render), react-native-view-shot (JPEG), expo-sharing, @react-native-community/netinfo.
 
-## Offline + LAN Mode
-- SQLite cache lokal (`expo-sqlite`) untuk semua GET endpoints
-- Antrian mutasi lokal saat offline; flush otomatis via NetInfo listener + timer 30 detik
-- Backend FastAPI bind di `0.0.0.0:8001` → **bisa diakses dari device lain di LAN/Wi-Fi** (user hanya perlu mengarahkan EXPO_PUBLIC_BACKEND_URL ke IP lokal perangkat server)
-- Tanpa batas waktu/jumlah data lokal — hanya dibatasi storage perangkat
-
-## Yang menunggu build Android produksi (hardware)
-- Cetak Bluetooth 58/80mm (ESC/POS) + logo + **multi-printer dapur/invoice** 
-- **Cash drawer** (ESC/POS pulse code) — toggle sudah tersedia di Pengaturan transaksi
-- **Barcode print** & **label pengiriman print**
-- Mode **invoice PDF** & **struk JPEG** untuk kirim via email/WhatsApp
-- WhatsApp Cloud API & email provider
-
-## Arsitektur Backend
-- FastAPI `/api/*`, Pydantic v2, Motor async MongoDB
-- Permission gating via `ensure_permission()`
-- Payment method **id→kind resolver** untuk validasi cash/credit yang customizable
-- Debt filter via `outstanding > 0` (lebih akurat & tahan terhadap method kustom)
-- Backup v2 + Restore owner-only
-
-## Database
-- `users`, `products` (prices dict + units array), `transactions` (full breakdown fields), `cash_entries`
-- `customers` (price_level_id), `suppliers`
-- `categories`, `payment_methods` (seed otomatis), `parked_transactions`
-- `business_settings` (price_levels, tax, shipping, hardware toggles, QRIS static)
-
-## Test
-Backend: **86/86 pytest passed** (iter 1-4). Lihat `/app/backend/tests/`.
+## Session 2026-10 Delivered (NEW)
+1. Produk Jasa (goods/service)
+2. Multi-satuan dengan konversi dasar
+3. Price Level linked to Customer
+4. Batal transaksi (void)
+5. Antrian wajib nama + struk antrian + batal eksplisit
+6. Header struk 4 baris
+7. Footer struk 4 baris
+8. Kirim struk JPEG
+9. Export produk Excel .xlsx
+10. Metric ringkasan tappable → detail
+11. Operator tappable → barang terjual
+12. Detail barang terjual (date/time)
+13. Semua laporan → PDF

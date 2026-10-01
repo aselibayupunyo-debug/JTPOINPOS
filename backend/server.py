@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -63,6 +64,8 @@ class ProductInput(BaseModel):
     sku: str = ""
     barcode: str = ""
     category: str = "Umum"
+    product_type: Literal["goods", "service"] = "goods"
+    base_unit: str = "Pcs"
     price: int = Field(ge=0)
     cost: int = Field(default=0, ge=0)
     prices: dict[str, int] = Field(default_factory=dict)
@@ -81,6 +84,8 @@ class TransactionItem(BaseModel):
     cost: int = Field(default=0, ge=0)
     discount: int = Field(default=0, ge=0)
     unit: str = ""
+    unit_factor: float = 1.0
+    product_type: Literal["goods", "service"] = "goods"
     kitchen_print: bool = False
 
 
@@ -98,12 +103,14 @@ class TransactionInput(BaseModel):
     discount_amount: int = Field(default=0, ge=0)
     tax_percent: float = Field(default=0, ge=0, le=100)
     shipping: int = Field(default=0, ge=0)
+    shift_id: Optional[str] = None
+    promo_ids: List[str] = Field(default_factory=list)
     note: str = ""
 
 
 class ParkedTransactionInput(BaseModel):
     label: str = ""
-    customer_name: str = "Umum"
+    customer_name: str = Field(min_length=1, max_length=120)
     customer_id: Optional[str] = None
     price_level_id: str = "default"
     items: List[TransactionItem]
@@ -125,6 +132,38 @@ class PaymentMethodInput(BaseModel):
     qris_image_base64: Optional[str] = None
     enabled: bool = True
     sort_order: int = 0
+
+
+class PromoCondition(BaseModel):
+    product_id: str
+    quantity: int = Field(ge=1)
+
+
+class PromoReward(BaseModel):
+    kind: Literal["free_item", "percent_discount", "fixed_price"] = "free_item"
+    product_id: Optional[str] = None
+    quantity: int = 1
+    percent: float = 0
+    fixed_price: int = 0
+
+
+class PromoInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: Literal["buy_x_get_y", "bundle", "percent"] = "buy_x_get_y"
+    conditions: List[PromoCondition] = Field(min_length=1)
+    reward: PromoReward
+    active: bool = True
+    note: str = ""
+
+
+class ShiftOpenInput(BaseModel):
+    opening_cash: int = Field(default=0, ge=0)
+    note: str = ""
+
+
+class ShiftCloseInput(BaseModel):
+    closing_cash: int = Field(default=0, ge=0)
+    note: str = ""
 
 
 class ContactInput(BaseModel):
@@ -316,9 +355,24 @@ async def create_transaction(payload: TransactionInput, user: dict = Depends(cur
     total = sum(item.price * item.quantity for item in payload.items)
     # stock direction: sale/purchase_return decrease stock, purchase/sale_return increase stock
     direction = {"sale": -1, "purchase": 1, "purchase_return": -1, "sale_return": 1}[payload.transaction_type]
+
+    def _is_service(item: TransactionItem) -> bool:
+        if item.product_type == "service":
+            return True
+        prod = by_id.get(item.product_id, {})
+        return prod.get("product_type") == "service"
+
+    def _stock_delta(item: TransactionItem) -> int:
+        # convert sold quantity into base units via unit_factor
+        factor = max(item.unit_factor or 1.0, 0.000001)
+        return int(round(item.quantity * factor))
+
     if direction < 0:
         for item in payload.items:
-            if by_id[item.product_id]["stock"] < item.quantity:
+            if _is_service(item):
+                continue
+            needed = _stock_delta(item)
+            if by_id[item.product_id].get("stock", 0) < needed:
                 raise HTTPException(status_code=400, detail=f"Stok {item.name} tidak mencukupi")
     # Resolve payment method id to its "kind" (cash/credit/qris_static/custom) for math + validation
     kind = payload.payment_method
@@ -334,11 +388,14 @@ async def create_transaction(payload: TransactionInput, user: dict = Depends(cur
     grand_total = after_discount + tax_amount + payload.shipping
     if payload.transaction_type == "sale" and kind == "cash" and payload.paid_amount < grand_total:
         raise HTTPException(status_code=400, detail="Nominal tunai kurang dari total")
-    # Apply stock change AFTER validation
+    # Apply stock change AFTER validation (skip services)
     for item in payload.items:
+        if _is_service(item):
+            continue
+        delta = _stock_delta(item)
         await db.products.update_one(
             {"id": item.product_id, "business_id": user["business_id"]},
-            {"$inc": {"stock": direction * item.quantity}},
+            {"$inc": {"stock": direction * delta}},
         )
     outstanding = max(grand_total - payload.paid_amount, 0) if kind == "credit" else 0
     transaction = {
@@ -357,6 +414,9 @@ async def create_transaction(payload: TransactionInput, user: dict = Depends(cur
         "customer_name": payload.customer_name.strip() or "Umum",
         "customer_id": payload.customer_id, "supplier_id": payload.supplier_id,
         "price_level_id": payload.price_level_id,
+        "shift_id": payload.shift_id,
+        "promo_ids": payload.promo_ids,
+        "status": "active",
         "note": payload.note, "created_at": now_iso(), "created_by": user["id"], "created_by_name": user["name"],
     }
     await db.transactions.insert_one(transaction)
@@ -386,12 +446,46 @@ async def get_transaction(transaction_id: str, user: dict = Depends(current_user
     return doc
 
 
+class CancelInput(BaseModel):
+    reason: str = ""
+
+
+@api_router.post("/transactions/{transaction_id}/cancel")
+async def cancel_transaction(transaction_id: str, payload: CancelInput, user: dict = Depends(current_user)):
+    doc = await db.transactions.find_one({"id": transaction_id, "business_id": user["business_id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Transaksi tidak ditemukan")
+    if doc.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Transaksi sudah dibatalkan")
+    permission_map = {"sale": "sales", "purchase": "purchases", "sale_return": "returns", "purchase_return": "returns"}
+    ensure_permission(user, permission_map.get(doc.get("transaction_type", "sale"), "sales"))
+    # Reverse stock
+    reverse_direction = {"sale": 1, "purchase": -1, "purchase_return": 1, "sale_return": -1}.get(doc.get("transaction_type", "sale"), 0)
+    for item in doc.get("items", []):
+        if item.get("product_type") == "service":
+            continue
+        factor = float(item.get("unit_factor", 1.0) or 1.0)
+        delta = int(round(item.get("quantity", 0) * max(factor, 0.000001)))
+        if delta == 0:
+            continue
+        await db.products.update_one(
+            {"id": item["product_id"], "business_id": user["business_id"]},
+            {"$inc": {"stock": reverse_direction * delta}},
+        )
+    await db.transactions.update_one(
+        {"id": transaction_id, "business_id": user["business_id"]},
+        {"$set": {"status": "cancelled", "cancelled_at": now_iso(), "cancelled_by": user["name"], "cancel_reason": payload.reason, "outstanding": 0}},
+    )
+    return {"ok": True}
+
+
+
 @api_router.get("/debts")
 async def debts(kind: Literal["receivable", "payable"] = "receivable", user: dict = Depends(current_user)):
     ensure_permission(user, "debts")
     types = ["sale"] if kind == "receivable" else ["purchase"]
     docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": {"$in": types}, "outstanding": {"$gt": 0}},
+        {"business_id": user["business_id"], "transaction_type": {"$in": types}, "outstanding": {"$gt": 0}, "status": {"$ne": "cancelled"}},
         {"_id": 0, "business_id": 0},
     ).sort("created_at", -1).to_list(500)
     total = sum(doc.get("outstanding", 0) for doc in docs)
@@ -513,7 +607,7 @@ async def report_summary(period: Literal["daily", "monthly", "yearly"] = "daily"
     else:
         start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
     docs = await db.transactions.find(
-        {"business_id": user["business_id"], "created_at": {"$gte": start.isoformat()}},
+        {"business_id": user["business_id"], "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
         {"_id": 0, "business_id": 0},
     ).to_list(10000)
     cash_entries = await db.cash_entries.find(
@@ -526,11 +620,11 @@ async def report_summary(period: Literal["daily", "monthly", "yearly"] = "daily"
     purchase_returns = [d for d in docs if d["transaction_type"] == "purchase_return"]
     products_data = await db.products.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(5000)
     receivable_docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "outstanding": {"$gt": 0}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "outstanding": {"$gt": 0}, "status": {"$ne": "cancelled"}},
         {"_id": 0},
     ).to_list(2000)
     payable_docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "purchase", "outstanding": {"$gt": 0}},
+        {"business_id": user["business_id"], "transaction_type": "purchase", "outstanding": {"$gt": 0}, "status": {"$ne": "cancelled"}},
         {"_id": 0},
     ).to_list(2000)
     sales_total = sum(d["total"] for d in sales) - sum(d["total"] for d in sale_returns)
@@ -661,6 +755,8 @@ class BusinessSettingsInput(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     footer_note: Optional[str] = None
+    header_lines: List[str] = Field(default_factory=list, max_length=4)
+    footer_lines: List[str] = Field(default_factory=list, max_length=4)
     logo_base64: Optional[str] = None
     receipt_width: Literal["58mm", "80mm"] = "58mm"
     whatsapp_number: Optional[str] = None
@@ -677,6 +773,14 @@ class BusinessSettingsInput(BaseModel):
     enabled_payment_kinds: List[str] = Field(default_factory=lambda: ["cash", "credit"])
     email_recipient: str = ""
 
+    @classmethod
+    def _strip_empty(cls, value: List[str]) -> List[str]:
+        return [v.strip() for v in (value or []) if v and v.strip()][:4]
+
+    def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
+        object.__setattr__(self, "header_lines", self._strip_empty(self.header_lines))
+        object.__setattr__(self, "footer_lines", self._strip_empty(self.footer_lines))
+
 
 @api_router.get("/settings")
 async def get_settings(user: dict = Depends(current_user)):
@@ -686,6 +790,7 @@ async def get_settings(user: dict = Depends(current_user)):
     defaults = {
         "business_name": user["business_name"], "address": "", "phone": "",
         "footer_note": "Terima kasih atas kunjungan Anda", "logo_base64": None,
+        "header_lines": [], "footer_lines": [],
         "receipt_width": "58mm", "whatsapp_number": "", "qris_static_image": None,
         "cashdrawer_enabled": False, "multi_printer": False,
         "tax_percent": 0, "tax_label": "Pajak", "shipping_default": 0,
@@ -839,7 +944,7 @@ async def report_products(period: Literal["daily", "monthly", "yearly"] = "month
     ensure_permission(user, "reports")
     start = _period_start(period)
     sales = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
         {"_id": 0, "items": 1},
     ).to_list(10000)
     buckets: dict[str, dict[str, Any]] = {}
@@ -859,7 +964,7 @@ async def report_customers(period: Literal["daily", "monthly", "yearly"] = "mont
     ensure_permission(user, "reports")
     start = _period_start(period)
     sales = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
         {"_id": 0, "customer_id": 1, "customer_name": 1, "total": 1, "outstanding": 1, "payment_method": 1, "items": 1},
     ).to_list(50000)
     buckets: dict[str, dict[str, Any]] = {}
@@ -880,7 +985,7 @@ async def report_operators(period: Literal["daily", "monthly", "yearly"] = "mont
     ensure_permission(user, "reports")
     start = _period_start(period)
     docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "created_at": {"$gte": start.isoformat()}, "status": {"$ne": "cancelled"}},
         {"_id": 0, "created_by": 1, "created_by_name": 1, "total": 1, "items": 1},
     ).to_list(50000)
     buckets: dict[str, dict[str, Any]] = {}
@@ -893,6 +998,93 @@ async def report_operators(period: Literal["daily", "monthly", "yearly"] = "mont
             b["profit"] += (item["price"] - item.get("cost", 0)) * item["quantity"]
     rows = sorted(buckets.values(), key=lambda r: r["total_sales"], reverse=True)
     return {"period": period, "rows": rows}
+
+
+@api_router.get("/reports/sales-items")
+async def report_sales_items(
+    period: Literal["daily", "monthly", "yearly"] = "monthly",
+    operator_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
+    """Flat list of sold items with invoice number, date/time, operator & customer. Can filter by operator or product."""
+    ensure_permission(user, "reports")
+    start = _period_start(period)
+    query: dict[str, Any] = {
+        "business_id": user["business_id"],
+        "transaction_type": "sale",
+        "created_at": {"$gte": start.isoformat()},
+        "status": {"$ne": "cancelled"},
+    }
+    if operator_id:
+        query["created_by"] = operator_id
+    docs = await db.transactions.find(query, {"_id": 0, "business_id": 0}).sort("created_at", -1).to_list(50000)
+    rows: list[dict[str, Any]] = []
+    for tx in docs:
+        for item in tx.get("items", []):
+            if product_id and item.get("product_id") != product_id:
+                continue
+            rows.append({
+                "invoice_no": tx.get("invoice_no"),
+                "transaction_id": tx.get("id"),
+                "created_at": tx.get("created_at"),
+                "customer_name": tx.get("customer_name", "Umum"),
+                "operator_name": tx.get("created_by_name", "-"),
+                "operator_id": tx.get("created_by"),
+                "product_id": item.get("product_id"),
+                "name": item.get("name"),
+                "quantity": item.get("quantity", 0),
+                "unit": item.get("unit", ""),
+                "price": item.get("price", 0),
+                "discount": item.get("discount", 0),
+                "subtotal": item.get("price", 0) * item.get("quantity", 0) - item.get("discount", 0),
+                "cost": item.get("cost", 0),
+                "profit": (item.get("price", 0) - item.get("cost", 0)) * item.get("quantity", 0) - item.get("discount", 0),
+            })
+    return {"period": period, "rows": rows, "total": sum(r["subtotal"] for r in rows), "qty": sum(r["quantity"] for r in rows)}
+
+
+@api_router.get("/products/export")
+async def export_products(user: dict = Depends(current_user)):
+    """Export catalog produk ke file Excel (.xlsx)."""
+    ensure_permission(user, "inventory")
+    rows = await db.products.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0, "image_base64": 0}).sort("name", 1).to_list(10000)
+    data = []
+    for p in rows:
+        data.append({
+            "Nama": p.get("name", ""),
+            "SKU": p.get("sku", ""),
+            "Barcode": p.get("barcode", ""),
+            "Kategori": p.get("category", "Umum"),
+            "Tipe": "Jasa" if p.get("product_type") == "service" else "Barang",
+            "Satuan": p.get("base_unit", "Pcs"),
+            "Harga Pokok": p.get("cost", 0),
+            "Harga Jual": p.get("price", 0),
+            "Stok": p.get("stock", 0),
+            "Stok Minimum": p.get("min_stock", 5),
+        })
+    frame = pd.DataFrame(data if data else [{"Nama": "", "SKU": "", "Barcode": "", "Kategori": "", "Tipe": "", "Satuan": "", "Harga Pokok": 0, "Harga Jual": 0, "Stok": 0, "Stok Minimum": 0}])
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        frame.to_excel(writer, index=False, sheet_name="Produk")
+        workbook = writer.book
+        worksheet = writer.sheets["Produk"]
+        header_fmt = workbook.add_format({"bold": True, "bg_color": "#0f8043", "font_color": "white", "border": 1})
+        money_fmt = workbook.add_format({"num_format": "#,##0"})
+        for col_idx, column in enumerate(frame.columns):
+            worksheet.write(0, col_idx, column, header_fmt)
+            worksheet.set_column(col_idx, col_idx, max(14, min(32, int(frame[column].astype(str).map(len).max() or 10) + 2)))
+        for col_name in ("Harga Pokok", "Harga Jual", "Stok", "Stok Minimum"):
+            if col_name in frame.columns:
+                idx = frame.columns.get_loc(col_name)
+                worksheet.set_column(idx, idx, 15, money_fmt)
+    buffer.seek(0)
+    filename = f"produk-{user['business_name'].replace(' ', '_')}-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- Categories ----------
@@ -1001,6 +1193,139 @@ async def delete_parked(parked_id: str, user: dict = Depends(current_user)):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Antrian tidak ditemukan")
     return {"ok": True}
+
+
+# ---------- Promos ----------
+@api_router.get("/promos")
+async def list_promos(user: dict = Depends(current_user)):
+    return await db.promos.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api_router.post("/promos")
+async def create_promo(payload: PromoInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "settings")
+    doc = {"id": str(uuid.uuid4()), "business_id": user["business_id"], **payload.model_dump(), "created_at": now_iso()}
+    await db.promos.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"_id", "business_id"}}
+
+
+@api_router.put("/promos/{promo_id}")
+async def update_promo(promo_id: str, payload: PromoInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "settings")
+    result = await db.promos.update_one(
+        {"id": promo_id, "business_id": user["business_id"]},
+        {"$set": {**payload.model_dump(), "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Promo tidak ditemukan")
+    return await db.promos.find_one({"id": promo_id}, {"_id": 0, "business_id": 0})
+
+
+@api_router.delete("/promos/{promo_id}")
+async def delete_promo(promo_id: str, user: dict = Depends(current_user)):
+    ensure_permission(user, "settings")
+    result = await db.promos.delete_one({"id": promo_id, "business_id": user["business_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Promo tidak ditemukan")
+    return {"ok": True}
+
+
+# ---------- Shifts ----------
+@api_router.get("/shifts/current")
+async def current_shift(user: dict = Depends(current_user)):
+    doc = await db.shifts.find_one(
+        {"business_id": user["business_id"], "operator_id": user["id"], "closed_at": None},
+        {"_id": 0, "business_id": 0},
+    )
+    return doc or {}
+
+
+@api_router.get("/shifts")
+async def list_shifts(user: dict = Depends(current_user)):
+    return await db.shifts.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).sort("opened_at", -1).to_list(500)
+
+
+@api_router.post("/shifts/open")
+async def open_shift(payload: ShiftOpenInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "sales")
+    existing = await db.shifts.find_one({"business_id": user["business_id"], "operator_id": user["id"], "closed_at": None}, {"_id": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail="Masih ada shift aktif. Tutup dulu sebelum membuka shift baru.")
+    doc = {
+        "id": str(uuid.uuid4()), "business_id": user["business_id"],
+        "operator_id": user["id"], "operator_name": user["name"],
+        "opening_cash": payload.opening_cash, "closing_cash": 0, "difference": 0,
+        "expected_cash": payload.opening_cash,
+        "sales_total": 0, "cash_sales": 0, "non_cash_sales": 0,
+        "note": payload.note, "opened_at": now_iso(), "closed_at": None,
+    }
+    await db.shifts.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"_id", "business_id"}}
+
+
+async def _compute_shift_summary(bid: str, shift_id: str, opened_at: str) -> dict:
+    txs = await db.transactions.find(
+        {"business_id": bid, "shift_id": shift_id, "transaction_type": "sale"},
+        {"_id": 0, "total": 1, "paid_amount": 1},
+    ).to_list(50000)
+    sales_total = sum(tx.get("total", 0) for tx in txs)
+    # Resolve cash vs non-cash via payment method lookup
+    cash_tx_ids = []
+    cash_sales = 0
+    tx_full = await db.transactions.find(
+        {"business_id": bid, "shift_id": shift_id, "transaction_type": "sale"},
+        {"_id": 0, "payment_method": 1, "total": 1},
+    ).to_list(50000)
+    for tx in tx_full:
+        pm = tx.get("payment_method")
+        if pm == "cash":
+            cash_sales += tx.get("total", 0); continue
+        pm_doc = await db.payment_methods.find_one({"id": pm, "business_id": bid}, {"_id": 0, "kind": 1})
+        if (pm_doc or {}).get("kind") == "cash":
+            cash_sales += tx.get("total", 0)
+    non_cash = sales_total - cash_sales
+    # Cash entries during shift
+    entries = await db.cash_entries.find(
+        {"business_id": bid, "created_at": {"$gte": opened_at}},
+        {"_id": 0, "entry_type": 1, "amount": 1},
+    ).to_list(50000)
+    cash_in = sum(e["amount"] for e in entries if e["entry_type"] == "income")
+    cash_out = sum(e["amount"] for e in entries if e["entry_type"] == "expense")
+    return {"sales_total": sales_total, "cash_sales": cash_sales, "non_cash_sales": non_cash, "cash_in": cash_in, "cash_out": cash_out, "transaction_count": len(txs)}
+
+
+@api_router.get("/shifts/{shift_id}")
+async def shift_detail(shift_id: str, user: dict = Depends(current_user)):
+    doc = await db.shifts.find_one({"id": shift_id, "business_id": user["business_id"]}, {"_id": 0, "business_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Shift tidak ditemukan")
+    summary = await _compute_shift_summary(user["business_id"], shift_id, doc["opened_at"])
+    doc.update(summary)
+    doc["expected_cash"] = doc["opening_cash"] + summary["cash_sales"] + summary["cash_in"] - summary["cash_out"]
+    return doc
+
+
+@api_router.post("/shifts/{shift_id}/close")
+async def close_shift(shift_id: str, payload: ShiftCloseInput, user: dict = Depends(current_user)):
+    doc = await db.shifts.find_one({"id": shift_id, "business_id": user["business_id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Shift tidak ditemukan")
+    if doc.get("closed_at"):
+        raise HTTPException(status_code=400, detail="Shift sudah ditutup")
+    if doc.get("operator_id") != user["id"] and user["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Hanya operator pemilik shift atau owner yang bisa menutup")
+    summary = await _compute_shift_summary(user["business_id"], shift_id, doc["opened_at"])
+    expected = doc["opening_cash"] + summary["cash_sales"] + summary["cash_in"] - summary["cash_out"]
+    difference = payload.closing_cash - expected
+    update = {
+        "closing_cash": payload.closing_cash, "expected_cash": expected, "difference": difference,
+        "sales_total": summary["sales_total"], "cash_sales": summary["cash_sales"], "non_cash_sales": summary["non_cash_sales"],
+        "cash_in": summary["cash_in"], "cash_out": summary["cash_out"], "transaction_count": summary["transaction_count"],
+        "note": (doc.get("note", "") + ("\n" if doc.get("note") else "") + payload.note).strip(),
+        "closed_at": now_iso(),
+    }
+    await db.shifts.update_one({"id": shift_id, "business_id": user["business_id"]}, {"$set": update})
+    return await db.shifts.find_one({"id": shift_id}, {"_id": 0, "business_id": 0})
 
 
 app.include_router(api_router)
