@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration-4 retest for KasirKu Pro payment-method id resolution fix. Full regression PASSES: 86/86 tests green across backend/tests/* (test_backend_full.py + test_contacts_reports.py + test_iter3_features.py + test_public_api.py + new test_iter4_pm_resolution.py). Critical bug from iter-3 (test_14_transaction_cash_insufficient_uses_grand_total) is NOW PASSING: /api/transactions resolves payment_method id (pm_cash/pm_credit/pm_qris/custom-uuid) to its kind via db.payment_methods before enforcing insufficient-cash and credit-outstanding logic (server.py:329-343). Added 9-test suite (test_iter4_pm_resolution.py) covering: (1) pm_credit sale with paid<grand -> outstanding=grand-paid (resolved from id, not literal), (2) pm_cash insufficient paid still 400, (3-5) DELETE /api/payment-methods/{pm_cash|pm_credit|pm_qris} all return 400 with message 'Metode default tidak bisa dihapus. Nonaktifkan saja.', (6) DELETE custom-uuid payment-method still 200, (7) GET /api/debts?kind=receivable includes pm_credit transactions (filter now outstanding>0, server.py:394), (8) GET /api/reports/summary.receivable reflects pm_credit outstanding (server.py:529,547), (9) GET /api/customers stats attribute outstanding correctly to the customer (server.py:750). All 9 new tests PASS. All previous iter-3 21 tests PASS including the previously-failing test_14. No open critical issues.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/transactions",
+        "issue": "Dead code left at server.py:328: `outstanding = max(total - payload.paid_amount, 0) if payload.payment_method == 'credit' else 0` — this value is immediately overwritten at line 343 by the correct kind-based computation. Harmless but should be removed for clarity."
+      },
+      {
+        "endpoint": "POST /api/transactions",
+        "issue": "Stock is decremented at lines 323-327 BEFORE grand_total is computed and the insufficient-cash check runs at line 341. If the check fails, stock has already been reduced and is not rolled back. Should compute totals + validate payment BEFORE mutating stock, or wrap in a Motor transaction."
+      },
+      {
+        "endpoint": "GET /api/payment-methods",
+        "issue": "Auto-seed in list_payment_methods (server.py:938-947) is not idempotent-safe under concurrent calls — two parallel GETs on a fresh business can insert duplicates. Use upsert with unique index."
+      },
+      {
+        "endpoint": "PUT /api/payment-methods/{pm_id}",
+        "issue": "Default seeded ids (pm_cash/pm_credit/pm_qris) are protected from DELETE (good) but CAN still be updated (kind, enabled, name). Consider also forbidding `kind` changes on seeded ids to prevent a user from accidentally changing pm_cash kind to custom and breaking the cash-insufficient check."
+      },
+      {
+        "endpoint": "POST /api/restore",
+        "issue": "delete_many + insert_many per collection runs without transactions — crash leaves partial state. Not blocking for MVP."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_pm_resolution.py",
+    "/app/test_reports/pytest/iteration4_iter3.xml",
+    "/app/test_reports/pytest/iteration4_pm.xml",
+    "/app/test_reports/pytest/iteration4_full.xml"
+  ],
+  "action_items": [
+    "(Optional cleanup) Remove dead line server.py:328 — the outstanding re-assignment at line 343 supersedes it.",
+    "(Optional) Also guard `kind` field on PUT /api/payment-methods/{pm_cash|pm_credit|pm_qris} so defaults keep their semantic kind.",
+    "(Carried over, non-blocking) Compute grand_total + validate payment BEFORE decrementing stock; or wrap /api/transactions in a Motor transaction to keep stock consistent on 400.",
+    "(Carried over) Make OperatorInput.password Optional[str] so PUT /api/operators/{id} can keep existing password.",
+    "(Carried over) Split server.py (now 1023 lines) into routers: auth, products, transactions, cash, contacts, operators, reports, settings, categories, payment_methods, parked, backup."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1023 lines — still past the 700 soft limit. Routers split is overdue.",
+    "Payment-method id resolution is now correct for math/validation (server.py:329-333, 341, 343), and the `payment_method` string is still stored verbatim on the transaction document (line 347) which keeps backward compat with existing records.",
+    "/api/debts (server.py:394) and /api/reports/summary (lines 529,533,547-548) and contact stats (line 750) all now rely on `outstanding > 0` instead of `payment_method == 'credit'`, which correctly captures pm_credit sales AND any partially-paid cash sale. Good.",
+    "The delete-guard for default payment-methods (server.py:975-976) short-circuits BEFORE the DB call, so it works even if the method does not exist in the business's collection — returns 400 consistently. Message in Indonesian matches app locale."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4_pm_resolution.py (new, 9 tests covering payment-method id resolution, default-method delete guards, debts/reports/contact-stats outstanding>0 filter)"
+  ],
+  "success_rate": {"backend": "100% (86/86 full regression; iter-4 9/9; iter-3 21/21 incl. previously-failing test_14)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "test_iter4_pm_resolution.py registers a fresh owner (iter4owner_<uuid>) per run, triggers payment-method autoseed, creates one TEST_Iter4 Prod product (stock 500) and one TEST_Iter4_Customer_<uuid> customer. Posts one pm_credit sale (grand 100000, paid 40000, outstanding 60000) used by subsequent debts/reports/stats assertions, plus one 400-attempt pm_cash sale (no state change). Creates and deletes one TEST_Iter4_Transfer custom payment-method. All TEST_ prefixes + unique usernames keep re-runs isolated.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fix verified green. Run `pytest backend/tests/ -v` from /app with EXPO_BACKEND_URL=<EXPO_PUBLIC_BACKEND_URL>; expect 86/86. The resolution logic is at server.py:329-333: unknown payment_method values are looked up in db.payment_methods for the business and resolved to their `kind`; legacy literals ('cash','credit','qris_static','custom') pass through unchanged, which keeps all older tests happy. For next iterations, the open non-blocking items are (a) rollback-stock-on-400 in /api/transactions, (b) idempotent payment-method autoseed under concurrency, (c) guard `kind` field on PUT for default pm_* ids, and (d) routers split for the 1023-line server.py.",
+  "rca_of_issue": "Not applicable — this iteration was a retest of a previously-identified bug. The bug (test_14 failing because insufficient-cash check compared raw payment_method='pm_cash' against literal 'cash') has been fixed as prescribed in iter-3 report (resolve id -> kind via db.payment_methods). Verified by: (1) iter-3 test_14 now passing (was failing), (2) new test_iter4_pm_resolution.test_01 verifying pm_credit outstanding = grand - paid (was 0 before fix), (3) new test_02 verifying pm_cash insufficient still 400, (4) new tests 03-05 verifying default-method delete guard returns 400, (5) new test_06 verifying custom-uuid delete still succeeds, (6) new tests 07-09 verifying debts/reports/customer-stats correctly include pm_credit outstanding via the outstanding>0 filter."
+}

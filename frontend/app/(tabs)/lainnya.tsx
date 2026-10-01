@@ -31,12 +31,17 @@ export default function LainnyaScreen() {
   const items: MenuItem[] = [
     { icon: "cart-outline", title: "Pembelian baru", detail: "Catat barang masuk dari supplier", path: "/purchase", permission: "purchases" },
     { icon: "return-up-back-outline", title: "Retur transaksi", detail: "Retur penjualan atau pembelian", path: "/returns", permission: "returns" },
+    { icon: "layers-outline", title: "Antrian transaksi", detail: "Transaksi diparkir yang bisa dilanjutkan", path: "/parked", permission: "sales" },
     { icon: "wallet-outline", title: "Arus kas", detail: "Kas masuk, keluar, saldo berjalan", path: "/cashflow", permission: "cashflow" },
     { icon: "alert-circle-outline", title: "Hutang & Piutang", detail: "Lunasi dan lacak kredit berjalan", path: "/debts", permission: "debts" },
     { icon: "people-outline", title: "Pelanggan", detail: "Database pelanggan & total transaksi", path: "/customers" },
     { icon: "briefcase-outline", title: "Supplier", detail: "Database supplier & total pembelian", path: "/suppliers" },
-    { icon: "receipt-outline", title: "Riwayat transaksi", detail: "Semua penjualan & pembelian", path: "/history" },
+    { icon: "receipt-outline", title: "Riwayat transaksi", detail: "Semua transaksi · cetak ulang struk", path: "/history" },
+    { icon: "pricetags-outline", title: "Kategori barang", detail: "Atur kategori produk", path: "/categories", permission: "inventory" },
+    { icon: "card-outline", title: "Metode pembayaran", detail: "Tunai, Kredit, QRIS statis, kustom", path: "/payment-methods", permission: "settings" },
+    { icon: "options-outline", title: "Pengaturan transaksi", detail: "Pajak, ongkir, level harga, hardware", path: "/transaction-settings", permission: "settings" },
     { icon: "person-add-outline", title: "Operator & kewenangan", detail: "Atur akses tim kasir", path: "/operators", ownerOnly: true },
+    { icon: "archive-outline", title: "Backup & Restore (ZIP)", detail: "Simpan dan pulihkan seluruh data", path: "/backup", ownerOnly: true },
     { icon: "print-outline", title: "Pengaturan toko & struk", detail: "Logo, printer 58/80mm, WhatsApp", path: "/settings", permission: "settings" },
   ];
 

@@ -114,7 +114,7 @@ export default function PurchaseScreen() {
         ) : null}
         <Text style={styles.inputLabel}>Metode pembayaran</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-          {(["cash", "credit", "bank", "wallet"] as PaymentMethod[]).map((m) => (
+          {(["cash", "credit"] as PaymentMethod[]).map((m) => (
             <Pressable key={m} testID={`purchase-pay-${m}`} onPress={() => setMethod(m)} style={[{ paddingHorizontal: 14, minHeight: 44, borderRadius: 12, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }, method === m && { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]}>
               <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: "800" }}>{PAYMENT_LABELS[m]}</Text>
             </Pressable>

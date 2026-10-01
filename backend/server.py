@@ -65,6 +65,8 @@ class ProductInput(BaseModel):
     category: str = "Umum"
     price: int = Field(ge=0)
     cost: int = Field(default=0, ge=0)
+    prices: dict[str, int] = Field(default_factory=dict)
+    units: List[dict[str, Any]] = Field(default_factory=list)
     stock: int = Field(default=0, ge=0)
     min_stock: int = Field(default=5, ge=0)
     kitchen_print: bool = False
@@ -77,18 +79,52 @@ class TransactionItem(BaseModel):
     quantity: int = Field(gt=0)
     price: int = Field(ge=0)
     cost: int = Field(default=0, ge=0)
+    discount: int = Field(default=0, ge=0)
+    unit: str = ""
     kitchen_print: bool = False
 
 
 class TransactionInput(BaseModel):
     transaction_type: Literal["sale", "purchase", "purchase_return", "sale_return"] = "sale"
-    payment_method: Literal["cash", "credit", "bank", "wallet", "qris"] = "cash"
+    payment_method: str = "cash"
+    payment_method_label: str = "Tunai"
     items: List[TransactionItem] = Field(min_length=1)
     paid_amount: int = Field(default=0, ge=0)
     customer_name: str = "Umum"
     customer_id: Optional[str] = None
     supplier_id: Optional[str] = None
+    price_level_id: str = "default"
+    discount_percent: float = Field(default=0, ge=0, le=100)
+    discount_amount: int = Field(default=0, ge=0)
+    tax_percent: float = Field(default=0, ge=0, le=100)
+    shipping: int = Field(default=0, ge=0)
     note: str = ""
+
+
+class ParkedTransactionInput(BaseModel):
+    label: str = ""
+    customer_name: str = "Umum"
+    customer_id: Optional[str] = None
+    price_level_id: str = "default"
+    items: List[TransactionItem]
+    note: str = ""
+    discount_percent: float = 0
+    discount_amount: int = 0
+    tax_percent: float = 0
+    shipping: int = 0
+
+
+class CategoryInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    icon: str = "cube-outline"
+
+
+class PaymentMethodInput(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    kind: Literal["cash", "credit", "qris_static", "custom"] = "custom"
+    qris_image_base64: Optional[str] = None
+    enabled: bool = True
+    sort_order: int = 0
 
 
 class ContactInput(BaseModel):
@@ -96,6 +132,7 @@ class ContactInput(BaseModel):
     phone: str = ""
     address: str = ""
     note: str = ""
+    price_level_id: str = "default"
 
 
 class CashEntryInput(BaseModel):
@@ -277,28 +314,49 @@ async def create_transaction(payload: TransactionInput, user: dict = Depends(cur
     if len(by_id) != len(set(product_ids)):
         raise HTTPException(status_code=400, detail="Ada produk yang tidak ditemukan")
     total = sum(item.price * item.quantity for item in payload.items)
-    if payload.transaction_type == "sale" and payload.payment_method == "cash" and payload.paid_amount < total:
-        raise HTTPException(status_code=400, detail="Nominal tunai kurang dari total")
     # stock direction: sale/purchase_return decrease stock, purchase/sale_return increase stock
     direction = {"sale": -1, "purchase": 1, "purchase_return": -1, "sale_return": 1}[payload.transaction_type]
     if direction < 0:
         for item in payload.items:
             if by_id[item.product_id]["stock"] < item.quantity:
                 raise HTTPException(status_code=400, detail=f"Stok {item.name} tidak mencukupi")
+    # Resolve payment method id to its "kind" (cash/credit/qris_static/custom) for math + validation
+    kind = payload.payment_method
+    if payload.payment_method not in {"cash", "credit", "qris_static", "custom"}:
+        pm_doc = await db.payment_methods.find_one({"id": payload.payment_method, "business_id": user["business_id"]}, {"_id": 0, "kind": 1})
+        kind = (pm_doc or {}).get("kind", payload.payment_method)
+    # recompute totals with discount/tax/shipping
+    item_discount_total = sum(item.discount for item in payload.items)
+    subtotal = total - item_discount_total
+    global_discount = payload.discount_amount + int(round(subtotal * payload.discount_percent / 100))
+    after_discount = max(subtotal - global_discount, 0)
+    tax_amount = int(round(after_discount * payload.tax_percent / 100))
+    grand_total = after_discount + tax_amount + payload.shipping
+    if payload.transaction_type == "sale" and kind == "cash" and payload.paid_amount < grand_total:
+        raise HTTPException(status_code=400, detail="Nominal tunai kurang dari total")
+    # Apply stock change AFTER validation
     for item in payload.items:
         await db.products.update_one(
             {"id": item.product_id, "business_id": user["business_id"]},
             {"$inc": {"stock": direction * item.quantity}},
         )
-    outstanding = max(total - payload.paid_amount, 0) if payload.payment_method == "credit" else 0
+    outstanding = max(grand_total - payload.paid_amount, 0) if kind == "credit" else 0
     transaction = {
         "id": str(uuid.uuid4()), "business_id": user["business_id"],
         "invoice_no": f"{payload.transaction_type[:2].upper()}-{datetime.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:5].upper()}",
         "transaction_type": payload.transaction_type, "payment_method": payload.payment_method,
-        "items": [item.model_dump() for item in payload.items], "total": total,
+        "payment_method_label": payload.payment_method_label,
+        "items": [item.model_dump() for item in payload.items],
+        "subtotal": subtotal, "item_discount": item_discount_total,
+        "discount_percent": payload.discount_percent, "discount_amount": payload.discount_amount,
+        "global_discount": global_discount,
+        "tax_percent": payload.tax_percent, "tax_amount": tax_amount,
+        "shipping": payload.shipping,
+        "total": grand_total,
         "paid_amount": payload.paid_amount, "outstanding": outstanding,
         "customer_name": payload.customer_name.strip() or "Umum",
         "customer_id": payload.customer_id, "supplier_id": payload.supplier_id,
+        "price_level_id": payload.price_level_id,
         "note": payload.note, "created_at": now_iso(), "created_by": user["id"], "created_by_name": user["name"],
     }
     await db.transactions.insert_one(transaction)
@@ -333,7 +391,7 @@ async def debts(kind: Literal["receivable", "payable"] = "receivable", user: dic
     ensure_permission(user, "debts")
     types = ["sale"] if kind == "receivable" else ["purchase"]
     docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": {"$in": types}, "payment_method": "credit", "outstanding": {"$gt": 0}},
+        {"business_id": user["business_id"], "transaction_type": {"$in": types}, "outstanding": {"$gt": 0}},
         {"_id": 0, "business_id": 0},
     ).sort("created_at", -1).to_list(500)
     total = sum(doc.get("outstanding", 0) for doc in docs)
@@ -468,11 +526,11 @@ async def report_summary(period: Literal["daily", "monthly", "yearly"] = "daily"
     purchase_returns = [d for d in docs if d["transaction_type"] == "purchase_return"]
     products_data = await db.products.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(5000)
     receivable_docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "sale", "payment_method": "credit", "outstanding": {"$gt": 0}},
+        {"business_id": user["business_id"], "transaction_type": "sale", "outstanding": {"$gt": 0}},
         {"_id": 0},
     ).to_list(2000)
     payable_docs = await db.transactions.find(
-        {"business_id": user["business_id"], "transaction_type": "purchase", "payment_method": "credit", "outstanding": {"$gt": 0}},
+        {"business_id": user["business_id"], "transaction_type": "purchase", "outstanding": {"$gt": 0}},
         {"_id": 0},
     ).to_list(2000)
     sales_total = sum(d["total"] for d in sales) - sum(d["total"] for d in sale_returns)
@@ -498,12 +556,55 @@ async def report_summary(period: Literal["daily", "monthly", "yearly"] = "daily"
 # ---------- Backup / Import ----------
 @api_router.get("/backup")
 async def backup(user: dict = Depends(current_user)):
-    products_data = await db.products.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
-    transactions_data = await db.transactions.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
-    cash_data = await db.cash_entries.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
-    customers_data = await db.customers.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
-    suppliers_data = await db.suppliers.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).to_list(100000)
-    return {"exported_at": now_iso(), "business_name": user["business_name"], "products": products_data, "transactions": transactions_data, "cash_entries": cash_data, "customers": customers_data, "suppliers": suppliers_data}
+    bid = user["business_id"]
+    projection = {"_id": 0, "business_id": 0}
+    products_data = await db.products.find({"business_id": bid}, projection).to_list(100000)
+    transactions_data = await db.transactions.find({"business_id": bid}, projection).to_list(100000)
+    cash_data = await db.cash_entries.find({"business_id": bid}, projection).to_list(100000)
+    customers_data = await db.customers.find({"business_id": bid}, projection).to_list(100000)
+    suppliers_data = await db.suppliers.find({"business_id": bid}, projection).to_list(100000)
+    categories_data = await db.categories.find({"business_id": bid}, projection).to_list(5000)
+    payment_methods_data = await db.payment_methods.find({"business_id": bid}, projection).to_list(500)
+    parked_data = await db.parked_transactions.find({"business_id": bid}, projection).to_list(5000)
+    settings_data = await db.business_settings.find_one({"business_id": bid}, projection) or {}
+    return {
+        "exported_at": now_iso(), "business_name": user["business_name"], "version": 2,
+        "products": products_data, "transactions": transactions_data, "cash_entries": cash_data,
+        "customers": customers_data, "suppliers": suppliers_data, "categories": categories_data,
+        "payment_methods": payment_methods_data, "parked_transactions": parked_data, "settings": settings_data,
+    }
+
+
+@api_router.post("/restore")
+async def restore_backup(payload: dict[str, Any], user: dict = Depends(current_user)):
+    if user["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Hanya pemilik yang dapat memulihkan data")
+    bid = user["business_id"]
+    collections = {
+        "products": db.products, "transactions": db.transactions, "cash_entries": db.cash_entries,
+        "customers": db.customers, "suppliers": db.suppliers, "categories": db.categories,
+        "payment_methods": db.payment_methods, "parked_transactions": db.parked_transactions,
+    }
+    stats: dict[str, int] = {}
+    for key, coll in collections.items():
+        rows = payload.get(key, [])
+        if not isinstance(rows, list):
+            continue
+        await coll.delete_many({"business_id": bid})
+        if rows:
+            for row in rows:
+                row["business_id"] = bid
+                row.pop("_id", None)
+            await coll.insert_many(rows)
+        stats[key] = len(rows)
+    settings = payload.get("settings")
+    if isinstance(settings, dict):
+        settings = {k: v for k, v in settings.items() if k != "_id"}
+        settings["business_id"] = bid
+        settings["restored_at"] = now_iso()
+        await db.business_settings.update_one({"business_id": bid}, {"$set": settings}, upsert=True)
+        stats["settings"] = 1
+    return {"restored": stats}
 
 
 @api_router.post("/products/import")
@@ -563,13 +664,38 @@ class BusinessSettingsInput(BaseModel):
     logo_base64: Optional[str] = None
     receipt_width: Literal["58mm", "80mm"] = "58mm"
     whatsapp_number: Optional[str] = None
+    qris_static_image: Optional[str] = None
+    cashdrawer_enabled: bool = False
+    multi_printer: bool = False
+    tax_percent: float = 0
+    tax_label: str = "Pajak"
+    shipping_default: int = 0
+    allow_price_edit: bool = True
+    auto_park_on_cancel: bool = False
+    confirm_cancel: bool = True
+    price_levels: List[dict[str, str]] = Field(default_factory=lambda: [{"id": "default", "name": "Harga Jual"}])
+    enabled_payment_kinds: List[str] = Field(default_factory=lambda: ["cash", "credit"])
+    email_recipient: str = ""
 
 
 @api_router.get("/settings")
 async def get_settings(user: dict = Depends(current_user)):
     doc = await db.business_settings.find_one({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0})
     if not doc:
-        doc = {"business_name": user["business_name"], "address": "", "phone": "", "footer_note": "Terima kasih atas kunjungan Anda", "logo_base64": None, "receipt_width": "58mm", "whatsapp_number": ""}
+        doc = {}
+    defaults = {
+        "business_name": user["business_name"], "address": "", "phone": "",
+        "footer_note": "Terima kasih atas kunjungan Anda", "logo_base64": None,
+        "receipt_width": "58mm", "whatsapp_number": "", "qris_static_image": None,
+        "cashdrawer_enabled": False, "multi_printer": False,
+        "tax_percent": 0, "tax_label": "Pajak", "shipping_default": 0,
+        "allow_price_edit": True, "auto_park_on_cancel": False, "confirm_cancel": True,
+        "price_levels": [{"id": "default", "name": "Harga Jual"}],
+        "enabled_payment_kinds": ["cash", "credit"],
+        "email_recipient": "",
+    }
+    for k, v in defaults.items():
+        doc.setdefault(k, v)
     return doc
 
 
@@ -621,8 +747,7 @@ async def _list_contacts(collection: str, user: dict, search: str = ""):
         bucket = stats.setdefault(cid, {"count": 0, "spent": 0, "outstanding": 0})
         bucket["count"] += 1
         bucket["spent"] += tx.get("total", 0)
-        if tx.get("payment_method") == "credit":
-            bucket["outstanding"] += tx.get("outstanding", 0)
+        bucket["outstanding"] += tx.get("outstanding", 0)
     for d in docs:
         s = stats.get(d["id"], {"count": 0, "spent": 0, "outstanding": 0})
         d["transaction_count"] = s["count"]
@@ -743,8 +868,7 @@ async def report_customers(period: Literal["daily", "monthly", "yearly"] = "mont
         b = buckets.setdefault(key, {"customer_id": tx.get("customer_id"), "customer_name": tx.get("customer_name", "Umum"), "transaction_count": 0, "total_spent": 0, "outstanding": 0, "profit": 0})
         b["transaction_count"] += 1
         b["total_spent"] += tx.get("total", 0)
-        if tx.get("payment_method") == "credit":
-            b["outstanding"] += tx.get("outstanding", 0)
+        b["outstanding"] += tx.get("outstanding", 0)
         for item in tx.get("items", []):
             b["profit"] += (item["price"] - item.get("cost", 0)) * item["quantity"]
     rows = sorted(buckets.values(), key=lambda r: r["total_spent"], reverse=True)
@@ -769,6 +893,114 @@ async def report_operators(period: Literal["daily", "monthly", "yearly"] = "mont
             b["profit"] += (item["price"] - item.get("cost", 0)) * item["quantity"]
     rows = sorted(buckets.values(), key=lambda r: r["total_sales"], reverse=True)
     return {"period": period, "rows": rows}
+
+
+# ---------- Categories ----------
+@api_router.get("/categories")
+async def list_categories(user: dict = Depends(current_user)):
+    return await db.categories.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).sort("name", 1).to_list(500)
+
+
+@api_router.post("/categories")
+async def create_category(payload: CategoryInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "inventory")
+    name = payload.name.strip()
+    if await db.categories.find_one({"business_id": user["business_id"], "name": name}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail="Kategori sudah ada")
+    doc = {"id": str(uuid.uuid4()), "business_id": user["business_id"], "name": name, "icon": payload.icon, "created_at": now_iso()}
+    await db.categories.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"_id", "business_id"}}
+
+
+@api_router.put("/categories/{category_id}")
+async def update_category(category_id: str, payload: CategoryInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "inventory")
+    result = await db.categories.update_one(
+        {"id": category_id, "business_id": user["business_id"]},
+        {"$set": {"name": payload.name.strip(), "icon": payload.icon}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Kategori tidak ditemukan")
+    return await db.categories.find_one({"id": category_id}, {"_id": 0, "business_id": 0})
+
+
+@api_router.delete("/categories/{category_id}")
+async def delete_category(category_id: str, user: dict = Depends(current_user)):
+    ensure_permission(user, "inventory")
+    result = await db.categories.delete_one({"id": category_id, "business_id": user["business_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Kategori tidak ditemukan")
+    return {"ok": True}
+
+
+# ---------- Payment Methods ----------
+@api_router.get("/payment-methods")
+async def list_payment_methods(user: dict = Depends(current_user)):
+    rows = await db.payment_methods.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).sort("sort_order", 1).to_list(100)
+    if not rows:
+        defaults = [
+            {"id": "pm_cash", "name": "Tunai", "kind": "cash", "enabled": True, "sort_order": 0, "qris_image_base64": None},
+            {"id": "pm_credit", "name": "Kredit", "kind": "credit", "enabled": True, "sort_order": 1, "qris_image_base64": None},
+            {"id": "pm_qris", "name": "QRIS Statis", "kind": "qris_static", "enabled": True, "sort_order": 2, "qris_image_base64": None},
+        ]
+        for d in defaults:
+            await db.payment_methods.insert_one({**d, "business_id": user["business_id"], "created_at": now_iso()})
+        rows = defaults
+    return rows
+
+
+@api_router.post("/payment-methods")
+async def create_payment_method(payload: PaymentMethodInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "settings")
+    doc = {"id": str(uuid.uuid4()), "business_id": user["business_id"], **payload.model_dump(), "created_at": now_iso()}
+    await db.payment_methods.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"_id", "business_id"}}
+
+
+@api_router.put("/payment-methods/{pm_id}")
+async def update_payment_method(pm_id: str, payload: PaymentMethodInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "settings")
+    result = await db.payment_methods.update_one(
+        {"id": pm_id, "business_id": user["business_id"]},
+        {"$set": payload.model_dump()},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Metode pembayaran tidak ditemukan")
+    return await db.payment_methods.find_one({"id": pm_id}, {"_id": 0, "business_id": 0})
+
+
+@api_router.delete("/payment-methods/{pm_id}")
+async def delete_payment_method(pm_id: str, user: dict = Depends(current_user)):
+    ensure_permission(user, "settings")
+    if pm_id in {"pm_cash", "pm_credit", "pm_qris"}:
+        raise HTTPException(status_code=400, detail="Metode default tidak bisa dihapus. Nonaktifkan saja.")
+    result = await db.payment_methods.delete_one({"id": pm_id, "business_id": user["business_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Metode pembayaran tidak ditemukan")
+    return {"ok": True}
+
+
+# ---------- Parked Transactions ----------
+@api_router.get("/parked")
+async def list_parked(user: dict = Depends(current_user)):
+    return await db.parked_transactions.find({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api_router.post("/parked")
+async def create_parked(payload: ParkedTransactionInput, user: dict = Depends(current_user)):
+    ensure_permission(user, "sales")
+    doc = {"id": str(uuid.uuid4()), "business_id": user["business_id"], **payload.model_dump(), "created_at": now_iso(), "created_by_name": user["name"]}
+    await db.parked_transactions.insert_one(doc)
+    return {k: v for k, v in doc.items() if k not in {"_id", "business_id"}}
+
+
+@api_router.delete("/parked/{parked_id}")
+async def delete_parked(parked_id: str, user: dict = Depends(current_user)):
+    ensure_permission(user, "sales")
+    result = await db.parked_transactions.delete_one({"id": parked_id, "business_id": user["business_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Antrian tidak ditemukan")
+    return {"ok": True}
 
 
 app.include_router(api_router)

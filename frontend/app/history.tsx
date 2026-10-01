@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, formatRupiah, PAYMENT_LABELS, PaymentMethod, TransactionDoc } from "@/src/api";
+import { apiRequest, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { Header } from "@/src/components/header";
 import { useTheme } from "@/src/theme";
@@ -53,19 +53,22 @@ export default function HistoryScreen() {
             <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada transaksi.</Text>
           </View>
         ) : list.map((tx) => (
-          <Pressable key={tx.id} testID={`tx-${tx.id}`} onPress={() => router.push({ pathname: "/receipt", params: { id: tx.id } })} style={styles.card}>
+          <View key={tx.id} style={styles.card}>
             <View style={styles.between}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.productName}>{KIND_LABEL[tx.transaction_type]} · {tx.invoice_no}</Text>
                 <Text style={styles.muted}>{tx.customer_name} · {new Date(tx.created_at).toLocaleString("id-ID")}</Text>
-                <Text style={[styles.muted, { marginTop: 4 }]}>{PAYMENT_LABELS[tx.payment_method as PaymentMethod]}{tx.outstanding > 0 ? ` · Sisa ${formatRupiah(tx.outstanding)}` : ""}</Text>
+                <Text style={[styles.muted, { marginTop: 4 }]}>{tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method}{tx.outstanding > 0 ? ` · Sisa ${formatRupiah(tx.outstanding)}` : ""}</Text>
               </View>
               <View style={{ alignItems: "flex-end" }}>
                 <Text style={[styles.cardTitle, { color: colors.brandPrimary }]}>{formatRupiah(tx.total)}</Text>
                 <Text style={styles.muted}>{tx.items.length} item</Text>
               </View>
             </View>
-          </Pressable>
+            <Pressable testID={`reprint-${tx.id}`} onPress={() => router.push({ pathname: "/receipt", params: { id: tx.id } })} style={[styles.outlineButton, { marginTop: 10 }]}>
+              <Text style={styles.outlineText}>Cetak ulang / Lihat struk</Text>
+            </Pressable>
+          </View>
         ))}
       </ScrollView>
     </View>

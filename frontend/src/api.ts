@@ -29,29 +29,71 @@ export type Product = {
   category: string;
   price: number;
   cost: number;
+  prices?: Record<string, number>;
+  units?: { name: string; factor: number; barcode?: string }[];
   stock: number;
   min_stock: number;
   kitchen_print?: boolean;
   image_base64?: string | null;
 };
 
-export type CartItem = Product & { quantity: number };
+export type CartItem = Product & { quantity: number; unit?: string; discount?: number };
 
 export type TransactionKind = "sale" | "purchase" | "sale_return" | "purchase_return";
-export type PaymentMethod = "cash" | "credit" | "bank" | "wallet" | "qris";
+export type PaymentKind = "cash" | "credit" | "qris_static" | "custom";
+export type PaymentMethod = string; // dynamic id like pm_cash, pm_credit, pm_qris, or uuid
+
+export type PaymentMethodDoc = {
+  id: string;
+  name: string;
+  kind: PaymentKind;
+  enabled: boolean;
+  sort_order: number;
+  qris_image_base64?: string | null;
+};
+
+export type PriceLevel = { id: string; name: string };
+
+export type Category = { id: string; name: string; icon: string };
+
+export type ParkedTransaction = {
+  id: string;
+  label: string;
+  customer_name: string;
+  customer_id?: string | null;
+  price_level_id: string;
+  items: { product_id: string; name: string; quantity: number; price: number; cost: number; unit?: string; discount?: number; kitchen_print?: boolean }[];
+  note: string;
+  discount_percent: number;
+  discount_amount: number;
+  tax_percent: number;
+  shipping: number;
+  created_at: string;
+  created_by_name?: string;
+};
 
 export type TransactionDoc = {
   id: string;
   invoice_no: string;
   transaction_type: TransactionKind;
   payment_method: PaymentMethod;
-  items: { product_id: string; name: string; quantity: number; price: number; cost: number; kitchen_print?: boolean }[];
+  payment_method_label?: string;
+  items: { product_id: string; name: string; quantity: number; price: number; cost: number; discount?: number; unit?: string; kitchen_print?: boolean }[];
+  subtotal?: number;
+  item_discount?: number;
+  discount_percent?: number;
+  discount_amount?: number;
+  global_discount?: number;
+  tax_percent?: number;
+  tax_amount?: number;
+  shipping?: number;
   total: number;
   paid_amount: number;
   outstanding: number;
   customer_name: string;
   customer_id?: string | null;
   supplier_id?: string | null;
+  price_level_id?: string;
   note: string;
   created_at: string;
   created_by_name?: string;
@@ -81,6 +123,7 @@ export type Contact = {
   phone: string;
   address: string;
   note: string;
+  price_level_id?: string;
   transaction_count?: number;
   total_spent?: number;
   outstanding?: number;
@@ -118,6 +161,25 @@ export type BusinessSettings = {
   logo_base64?: string | null;
   receipt_width: "58mm" | "80mm";
   whatsapp_number?: string;
+  qris_static_image?: string | null;
+  cashdrawer_enabled?: boolean;
+  multi_printer?: boolean;
+  tax_percent?: number;
+  tax_label?: string;
+  shipping_default?: number;
+  allow_price_edit?: boolean;
+  auto_park_on_cancel?: boolean;
+  confirm_cancel?: boolean;
+  price_levels?: PriceLevel[];
+  enabled_payment_kinds?: string[];
+  email_recipient?: string;
+};
+
+export const PAYMENT_KIND_LABELS: Record<PaymentKind, string> = {
+  cash: "Tunai",
+  credit: "Kredit",
+  qris_static: "QRIS Statis",
+  custom: "Kustom",
 };
 
 export class OfflineError extends Error {
@@ -238,10 +300,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   settings: "Pengaturan Toko",
 };
 
-export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+export const PAYMENT_LABELS: Record<string, string> = {
   cash: "Tunai",
   credit: "Kredit",
-  bank: "Transfer Bank",
-  wallet: "E-Wallet",
-  qris: "QRIS",
+  qris_static: "QRIS Statis",
 };

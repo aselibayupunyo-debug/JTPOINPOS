@@ -38,6 +38,11 @@ export default function RootLayout() {
                     <Stack.Screen name="history" />
                     <Stack.Screen name="settings" />
                     <Stack.Screen name="receipt" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+                    <Stack.Screen name="parked" />
+                    <Stack.Screen name="categories" />
+                    <Stack.Screen name="payment-methods" />
+                    <Stack.Screen name="transaction-settings" />
+                    <Stack.Screen name="backup" />
                   </Stack>
                 </AuthProvider>
               </SyncProvider>

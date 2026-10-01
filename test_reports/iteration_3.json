@@ -1,0 +1,70 @@
+{
+  "summary": "Iteration-3 backend testing for KasirKu Pro new endpoints. Added /app/backend/tests/test_iter3_features.py with 21 tests covering: Categories CRUD + 409 duplicate; Payment-methods auto-seed (pm_cash/pm_credit/pm_qris) + custom CRUD; extended Settings defaults (tax_percent, tax_label, allow_price_edit, confirm_cancel, cashdrawer_enabled, multi_printer, price_levels, enabled_payment_kinds, qris_static_image, email_recipient, shipping_default) + PUT update; Transaction math with discount_percent + item.discount + tax_percent + shipping (verified 29000 subtotal / 1000 item_discount / 2900 global_discount / 2871 tax_amount / 5000 shipping / 33971 total to the rupiah); Parked transactions POST (cashier allowed) / GET (desc order) / DELETE; Products with prices dict + units list; Customer price_level_id persisted; /api/backup version=2 includes categories, payment_methods, parked_transactions, settings dict; /api/restore owner-only replaces collections + settings; Permission matrix: cashier 403 on categories/payment-methods POST, cashier allowed on parked POST, operator without 'settings' 403 on PUT /api/settings; non-owner 403 on /api/restore. Result: 20/21 passed (95%). Full regression across iter-1 + iter-2 + iter-3: 76/77 (99%). ONE CRITICAL BACKEND BUG: `payment_method` id comparison in /api/transactions still uses hardcoded literals 'cash' and 'credit' instead of the new customizable IDs (pm_cash/pm_credit/pm_qris) — insufficient-cash validation and credit-outstanding computation are bypassed when the frontend sends the new ids.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/transactions",
+        "issue": "Insufficient-cash check and credit-outstanding computation use hardcoded string comparisons `payload.payment_method == 'cash'` (line 336) and `payload.payment_method == 'credit'` (lines 328 & 338 in server.py). With iteration-3 customizable payment methods, the frontend will send ids like 'pm_cash' / 'pm_credit', so (a) a sale with pm_cash and paid_amount < grand_total is wrongly accepted (returns 200 instead of 400), and (b) a sale with pm_credit would compute outstanding=0 (because the credit branch is skipped) and silently lose A/R. Reproduce: POST /api/transactions {payment_method:'pm_cash', items:[{price:15000,quantity:1,discount:0}], paid_amount:15000, tax_percent:11, shipping:5000} → grand_total 21650 but returns 200 with outstanding=0 and no error. Fix: resolve the payment_method id to its `kind` (lookup db.payment_methods, or accept payment_method_kind in the payload) and compare against 'cash'/'credit' instead of raw id; keep legacy literal ids working ('cash'/'credit') as fallback.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/restore",
+        "issue": "No validation of payload shape or protection against partial restores (crash mid-insert leaves business with half-replaced data because delete_many runs before insert_many per collection, no transaction/session). Consider wrapping in a Motor transaction or validating sizes first."
+      },
+      {
+        "endpoint": "POST /api/categories",
+        "issue": "Duplicate check is case-sensitive and does not trim both sides equally (uses .strip() on input but stored name may still match a differently-cased existing). Minor UX nit."
+      },
+      {
+        "endpoint": "PUT /api/categories/{id}",
+        "issue": "No 409 duplicate-name check on update (only POST enforces uniqueness)."
+      },
+      {
+        "endpoint": "PUT /api/payment-methods/{pm_id}",
+        "issue": "No guard against deleting/updating a default seeded id (pm_cash/pm_credit/pm_qris) — users can rename or disable all payment methods and leave the shop with no checkout path. Consider marking seeded methods as system or at least preventing delete when it's the last 'cash' kind."
+      },
+      {
+        "endpoint": "POST /api/parked",
+        "issue": "No cap/limit on items[]; a very large payload could be dumped into Mongo. Consider a soft limit (e.g., 100 items)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter3_features.py",
+    "/app/test_reports/pytest/iteration3_results.xml",
+    "/app/test_reports/pytest/iteration3_full.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix payment_method id handling in /api/transactions. The customizable payment-method ids (pm_cash, pm_credit, pm_qris, or user-defined) must be resolved to their `kind` ('cash'|'credit'|'qris_static'|'custom') before the insufficient-cash check and the credit-outstanding computation. Simplest fix: before the if/branch, do `pm_doc = await db.payment_methods.find_one({'id': payload.payment_method, 'business_id': user['business_id']})` and use `pm_kind = pm_doc['kind'] if pm_doc else payload.payment_method` for the comparisons. Keep raw 'cash'/'credit' strings working for backward compatibility.",
+    "Add 409 duplicate-name check on PUT /api/categories.",
+    "Guard seeded payment methods (pm_cash/pm_credit) against delete OR auto-reseed when the collection becomes empty on next GET (already auto-seeds when empty — but DELETE then next POST breaks).",
+    "(Carried over) Make OperatorInput.password Optional[str] so PUT /api/operators/{id} can keep existing password.",
+    "(Carried over) Split server.py (now ~1017 lines, well past the 700-line soft limit) into routers: auth, products, transactions, cash, contacts, operators, reports, settings, categories, payment_methods, parked, backup."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1017 lines — significantly past the 700-line soft limit. Routers split is overdue.",
+    "/api/transactions mixes the stock-decrement loop and the grand-total computation. If grand_total validation fails after the stock has already been decremented, stock is left in an inconsistent state (bug surface regardless of iter-3). Compute totals + validate payment BEFORE mutating stock, or wrap in a Motor transaction.",
+    "/api/restore performs delete_many + insert_many per collection without transactions. A crash leaves the business in a half-wiped state. Not blocking for MVP but worth a note.",
+    "The payment-method auto-seed in list_payment_methods is non-idempotent-safe under concurrent calls — two parallel GETs on a fresh business could insert duplicates. Use upsert or an existence check with unique index.",
+    "`payment_method` validation absent: any arbitrary string is accepted as payload.payment_method and stored. Should at minimum verify it belongs to the business's payment_methods collection OR is one of the legacy literals ('cash','credit').",
+    "`BusinessSettingsInput.update_settings` filters `v is not None` — this means a client cannot clear optional fields like `logo_base64` or `qris_static_image` back to null once set. Document this or allow explicit nullable clearing.",
+    "No validation that `price_level_id` sent in TransactionInput/ContactInput actually exists in settings.price_levels — orphan refs silently accepted (same pattern as orphan customer_id noted in iter-2)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter3_features.py (new, 21 tests in single TestClass for loadscope-safe parallel execution)"
+  ],
+  "success_rate": {"backend": "95% (20/21 iter-3 tests, 76/77 full regression)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Each iter-3 test run registers a fresh owner (iter3owner_<uuid>), a cashier operator (iter3cashier_<uuid>, perms=['sales']), and a 'no-settings' operator (iter3nos_<uuid>, perms=['sales','inventory','reports']). Creates one TEST_Kopi Sachet product with prices dict + units, one TEST_Grosir Boss customer with price_level_id='grosir', one TEST_Minuman category (then updated/deleted), one TEST_Transfer BCA payment method (CRUD), two parked transactions (Meja 3 + Meja 4), three transactions (one with discount+tax+shipping, one insufficient-cash attempt that incorrectly succeeded, one credit outstanding). Restore test wipes most collections for that business and seeds TEST_Restored_Cat. All data uses TEST_ prefixes + unique random usernames so re-runs stay isolated. Production data not touched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/ -v` from /app with EXPO_BACKEND_URL set to EXPO_PUBLIC_BACKEND_URL. pytest.ini forces -n 2 --dist loadscope so cross-class pytest.<attr> state does NOT survive — keep stateful flows inside one TestClass (see TestIter3Features). The ONE failing test (test_14_transaction_cash_insufficient_uses_grand_total) is intentionally left failing because it documents a real backend bug (payment_method id vs kind). After the main agent patches /api/transactions to resolve payment_method → kind, re-run the suite; test_14 should flip to passing. Full regression 76/77 as of this iteration.",
+  "rca_of_issue": "ROOT CAUSE for test_14 failure (CRITICAL bug): In server.py `create_transaction`, lines 328, 336, 338 compare `payload.payment_method` directly to the strings 'cash' and 'credit'. Iteration-3 introduced customizable payment methods with ids like 'pm_cash' and 'pm_credit' (seeded in `/api/payment-methods`), and the spec explicitly says the frontend will send `payment_method='pm_cash'`. As a result: (1) the cash insufficient-paid validation never triggers for pm_cash → sale accepted with any paid_amount including 0; (2) credit outstanding is never computed for pm_credit → A/R silently lost. REPRODUCTION: POST /api/transactions as owner with body {items:[{product_id:<id>,name:'x',quantity:1,price:15000,cost:10000,discount:0}], payment_method:'pm_cash', payment_method_label:'Tunai', paid_amount:15000, tax_percent:11, shipping:5000} → expected 400 ('Nominal tunai kurang dari total'), actual 200 with total=21650 and outstanding=0. MITIGATION: Before the stock loop (and before the if-branches), resolve the payment-method kind: `pm = await db.payment_methods.find_one({'id': payload.payment_method, 'business_id': user['business_id']}, {'_id':0,'kind':1}); pm_kind = (pm or {}).get('kind') or payload.payment_method`. Replace both `payload.payment_method == 'cash'` and `payload.payment_method == 'credit'` with `pm_kind == 'cash'` / `pm_kind == 'credit'`. Also persist `payment_method_kind` on the transaction document to make debt/report filters resilient. The current debts endpoint (line 389) also filters on `payment_method='credit'` and will miss pm_credit transactions once this is fixed — update that filter too (or filter on payment_method_kind). Additional safety: validate that payment_method id belongs to the caller's business or is one of the legacy literals, else 400."
+}

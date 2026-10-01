@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, BusinessSettings, formatRupiah, PAYMENT_LABELS, PaymentMethod, TransactionDoc } from "@/src/api";
+import { apiRequest, BusinessSettings, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -41,12 +41,17 @@ export default function ReceiptScreen() {
     lines.push(`Pelanggan: ${tx.customer_name}`);
     lines.push("─────────────────────");
     tx.items.forEach((i) => {
-      lines.push(`${i.name}`);
+      lines.push(`${i.name}${i.unit ? ` (${i.unit})` : ""}`);
       lines.push(`  ${i.quantity} x ${formatRupiah(i.price)}   ${formatRupiah(i.price * i.quantity)}`);
+      if (i.discount) lines.push(`  Diskon: -${formatRupiah(i.discount)}`);
     });
     lines.push("─────────────────────");
+    if (tx.subtotal && tx.subtotal !== tx.total) lines.push(`Subtotal     ${formatRupiah(tx.subtotal)}`);
+    if (tx.global_discount) lines.push(`Diskon       -${formatRupiah(tx.global_discount)}`);
+    if (tx.tax_amount) lines.push(`${settings.tax_label || "Pajak"} ${tx.tax_percent}%    ${formatRupiah(tx.tax_amount)}`);
+    if (tx.shipping) lines.push(`Ongkir       ${formatRupiah(tx.shipping)}`);
     lines.push(`TOTAL        ${formatRupiah(tx.total)}`);
-    lines.push(`Metode       ${PAYMENT_LABELS[tx.payment_method as PaymentMethod]}`);
+    lines.push(`Metode       ${tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method}`);
     if (tx.paid_amount) lines.push(`Dibayar      ${formatRupiah(tx.paid_amount)}`);
     if (tx.outstanding) lines.push(`Sisa Hutang  ${formatRupiah(tx.outstanding)}`);
     if (tx.paid_amount - tx.total > 0) lines.push(`Kembalian    ${formatRupiah(tx.paid_amount - tx.total)}`);
@@ -86,19 +91,44 @@ export default function ReceiptScreen() {
           <View style={{ height: 1, backgroundColor: colors.divider, alignSelf: "stretch", marginVertical: 12 }} />
           {tx.items.map((i, idx) => (
             <View key={idx} style={{ alignSelf: "stretch", marginBottom: 6 }}>
-              <Text style={styles.productName}>{i.name}</Text>
+              <Text style={styles.productName}>{i.name}{i.unit ? ` (${i.unit})` : ""}</Text>
               <View style={styles.between}>
                 <Text style={styles.muted}>{i.quantity} × {formatRupiah(i.price)}</Text>
                 <Text style={styles.productName}>{formatRupiah(i.price * i.quantity)}</Text>
               </View>
+              {i.discount ? <Text style={{ color: colors.warning, fontSize: 12 }}>Diskon -{formatRupiah(i.discount)}</Text> : null}
             </View>
           ))}
           <View style={{ height: 1, backgroundColor: colors.divider, alignSelf: "stretch", marginVertical: 12 }} />
-          <View style={[styles.between, { alignSelf: "stretch" }]}>
+          {tx.subtotal && tx.subtotal !== tx.total ? (
+            <View style={[styles.between, { alignSelf: "stretch" }]}>
+              <Text style={styles.muted}>Subtotal</Text>
+              <Text style={styles.muted}>{formatRupiah(tx.subtotal)}</Text>
+            </View>
+          ) : null}
+          {tx.global_discount ? (
+            <View style={[styles.between, { alignSelf: "stretch" }]}>
+              <Text style={styles.muted}>Diskon{tx.discount_percent ? ` ${tx.discount_percent}%` : ""}</Text>
+              <Text style={styles.muted}>-{formatRupiah(tx.global_discount)}</Text>
+            </View>
+          ) : null}
+          {tx.tax_amount ? (
+            <View style={[styles.between, { alignSelf: "stretch" }]}>
+              <Text style={styles.muted}>{settings.tax_label || "Pajak"} {tx.tax_percent}%</Text>
+              <Text style={styles.muted}>{formatRupiah(tx.tax_amount)}</Text>
+            </View>
+          ) : null}
+          {tx.shipping ? (
+            <View style={[styles.between, { alignSelf: "stretch" }]}>
+              <Text style={styles.muted}>Ongkir</Text>
+              <Text style={styles.muted}>{formatRupiah(tx.shipping)}</Text>
+            </View>
+          ) : null}
+          <View style={[styles.between, { alignSelf: "stretch", marginTop: 8 }]}>
             <Text style={styles.cardTitle}>Total</Text>
             <Text style={[styles.cardTitle, { color: colors.brandPrimary }]}>{formatRupiah(tx.total)}</Text>
           </View>
-          <Text style={[styles.muted, { alignSelf: "stretch", marginTop: 8 }]}>Pembayaran: {PAYMENT_LABELS[tx.payment_method as PaymentMethod]}</Text>
+          <Text style={[styles.muted, { alignSelf: "stretch", marginTop: 8 }]}>Pembayaran: {tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method}</Text>
           {tx.outstanding > 0 ? <Text style={{ color: colors.warning, fontWeight: "800", alignSelf: "stretch", marginTop: 4 }}>Sisa hutang: {formatRupiah(tx.outstanding)}</Text> : null}
           {settings.footer_note ? <Text style={[styles.muted, { marginTop: 14, textAlign: "center" }]}>{settings.footer_note}</Text> : null}
           <Text style={[styles.muted, { marginTop: 6 }]}>Lebar struk: {settings.receipt_width}</Text>
