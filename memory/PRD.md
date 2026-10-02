@@ -67,3 +67,12 @@ Backend testing: 191/191 PASS (168 regression + 23 new custom range/export tests
     - Toggle **"Buka laci kas otomatis"** di Pengaturan toko (ESC/POS cash drawer kick).
     - Permission Android: BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION.
     - **PENTING**: User HARUS Publish & generate APK Android baru untuk mengaktifkan fitur ini (TurboModule tidak jalan di Expo Go).
+
+## Session 2026-10 (Iter 11b) — Laporan Crash Fix
+33. **Fix crash Laporan di APK Android**: Tab Laporan sebelumnya menyebabkan app exit saat dibuka di HP native. Penyebab + perbaikan:
+    - **Promise.all throw** → ganti dengan wrapper `safely<T>()` per-endpoint, satu error tidak membatalkan semua.
+    - **Double-fetch race** antara `useFocusEffect` + `useEffect` (keduanya memanggil `load` dengan dep yang sama) → gabung jadi 1 fetch via useFocusEffect.
+    - **Dep `toast` di useCallback** memicu re-render infinite kalau ToastProvider setState → dihapus.
+    - **`new Date(bad).toISOString()`** throw RangeError untuk string tanggal invalid → bungkus try/catch + validasi regex YYYY-MM-DD.
+    - **500 transaksi diparse+render** = Hermes OOM di HP RAM rendah → turunkan ke limit=300, slice(0, 200) untuk render.
+    - **Null field crash** (`t.items.length`, `o.name.slice(…)`, `c.customer_name.slice(…)`) kalau dokumen rusak → tambah `?? "-"`/`?? 0`/`Array.isArray` guard di setiap render.

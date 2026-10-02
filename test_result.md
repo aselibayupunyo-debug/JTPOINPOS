@@ -170,13 +170,27 @@ frontend:
     implemented: true
     working: "NA"
     file: "/app/frontend/app/(tabs)/laporan.tsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
     needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
         comment: "Added 'Custom periode' chip which opens date range modal (YYYY-MM-DD inputs + preset chips: 7 hari / 30 hari / Bulan lalu). Added Export Excel button that downloads multi-sheet xlsx via downloadReportsExcel helper and shares via expo-sharing."
+      - working: false
+        agent: "user"
+        comment: "Bug: Laporan tab crashes app immediately on APK Android build. App exits when user taps Laporan."
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Hardened Laporan tab to prevent native crash:
+            - Each of 6 API endpoints now uses `safely<T>()` wrapper so one failure doesn't blank whole screen (previous Promise.all would reject all).
+            - Removed double-fetch race: useFocusEffect now handles both initial-load and period-change (was duplicated with useEffect).
+            - Removed `toast` from useCallback deps that could trigger infinite re-render if ToastProvider state changed.
+            - Guarded all date math with try/catch + /^\\d{4}-\\d{2}-\\d{2}$/ validation before new Date(…).toISOString().
+            - Array.isArray guard on every state setter so malformed server response can't crash the renderer.
+            - Reduced /transactions limit from 500 → 300 and cap display slice to 200 to avoid Hermes OOM on low-RAM Android phones.
+            - Defensive null-coalesce on every render field (t.items?.length, c.customer_name ?? "Umum", r.name ?? "-", etc.) so a single malformed doc can't throw a TypeError that bubbles past the ErrorBoundary.
   - task: "Buku Panduan Manual"
     implemented: true
     working: "NA"

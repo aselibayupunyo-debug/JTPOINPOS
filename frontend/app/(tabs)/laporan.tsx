@@ -53,34 +53,70 @@ export default function LaporanScreen() {
   const [operatorDetail, setOperatorDetail] = useState<null | { operator: OperatorReportRow; rows: SalesItemRow[] }>(null);
 
   const load = useCallback(async (p: Period, s?: string, e?: string) => {
-    try {
-      const qs = p === "custom" ? `period=custom&start=${s}&end=${e}` : `period=${p}`;
-      const [sum, pr, c, op, si, tx] = await Promise.all([
-        apiRequest<ReportSummary>(`/reports/summary?${qs}`),
-        apiRequest<{ rows: ProductReportRow[] }>(`/reports/products?${qs}`),
-        apiRequest<{ rows: CustomerReportRow[] }>(`/reports/customers?${qs}`),
-        apiRequest<{ rows: OperatorReportRow[] }>(`/reports/operators?${qs}`),
-        apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?${qs}`),
-        apiRequest<TransactionDoc[]>(`/transactions?kind=sale&limit=500`),
-      ]);
-      setReport(sum); setProducts(pr.rows); setCustomers(c.rows); setOperators(op.rows); setSalesItems(si.rows);
-      // Filter transactions by period
-      let startIso = "";
-      let endIso = "";
-      if (p === "custom" && s && e) {
-        startIso = new Date(`${s}T00:00:00`).toISOString();
-        endIso = new Date(`${e}T23:59:59.999`).toISOString();
-      } else {
-        startIso = p === "daily" ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
-          : p === "monthly" ? new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
-          : new Date(new Date().getFullYear(), 0, 1).toISOString();
-      }
-      setTransactions(tx.filter((t) => t.created_at >= startIso && (!endIso || t.created_at <= endIso) && t.status !== "cancelled"));
-    } catch (err) { toast.error("Gagal memuat laporan", err instanceof Error ? err.message : undefined); }
-  }, [toast]);
+    // Build date-range filter string safely; backend will tolerate blanks
+    const safeStart = typeof s === "string" ? s.trim() : "";
+    const safeEnd = typeof e === "string" ? e.trim() : "";
+    const qs = p === "custom"
+      ? `period=custom&start=${encodeURIComponent(safeStart)}&end=${encodeURIComponent(safeEnd)}`
+      : `period=${p}`;
 
-  useFocusEffect(useCallback(() => { load(period, customStart, customEnd); }, [load, period, customStart, customEnd]));
-  useEffect(() => { load(period, customStart, customEnd); apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined); }, [period, customStart, customEnd, load]);
+    // Compute client-side filter window as ISO strings. Guard every date op.
+    let startIso = "";
+    let endIso = "";
+    try {
+      if (p === "custom" && /^\d{4}-\d{2}-\d{2}$/.test(safeStart) && /^\d{4}-\d{2}-\d{2}$/.test(safeEnd)) {
+        const sd = new Date(`${safeStart}T00:00:00`);
+        const ed = new Date(`${safeEnd}T23:59:59.999`);
+        if (!Number.isNaN(sd.getTime())) startIso = sd.toISOString();
+        if (!Number.isNaN(ed.getTime())) endIso = ed.toISOString();
+      } else {
+        const now = new Date();
+        if (p === "daily") startIso = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        else if (p === "monthly") startIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        else if (p === "yearly") startIso = new Date(now.getFullYear(), 0, 1).toISOString();
+      }
+    } catch { /* keep empty — no filter */ }
+
+    // Fetch each endpoint independently so one failure does not blank the whole screen.
+    const safely = async <T,>(path: string, fallback: T): Promise<T> => {
+      try { return (await apiRequest<T>(path)); } catch { return fallback; }
+    };
+
+    const [sum, pr, c, op, si, tx] = await Promise.all([
+      safely<ReportSummary | null>(`/reports/summary?${qs}`, null),
+      safely<{ rows: ProductReportRow[] }>(`/reports/products?${qs}`, { rows: [] }),
+      safely<{ rows: CustomerReportRow[] }>(`/reports/customers?${qs}`, { rows: [] }),
+      safely<{ rows: OperatorReportRow[] }>(`/reports/operators?${qs}`, { rows: [] }),
+      safely<{ rows: SalesItemRow[] }>(`/reports/sales-items?${qs}`, { rows: [] }),
+      safely<TransactionDoc[]>(`/transactions?kind=sale&limit=300`, []),
+    ]);
+
+    setReport(sum);
+    setProducts(Array.isArray(pr?.rows) ? pr.rows : []);
+    setCustomers(Array.isArray(c?.rows) ? c.rows : []);
+    setOperators(Array.isArray(op?.rows) ? op.rows : []);
+    setSalesItems(Array.isArray(si?.rows) ? si.rows : []);
+
+    const txList = Array.isArray(tx) ? tx : [];
+    const filtered = txList.filter((t) => {
+      if (!t || typeof t.created_at !== "string") return false;
+      if (t.status === "cancelled") return false;
+      if (startIso && t.created_at < startIso) return false;
+      if (endIso && t.created_at > endIso) return false;
+      return true;
+    });
+    // Cap display list to avoid Hermes OOM on devices with many transactions.
+    setTransactions(filtered.slice(0, 200));
+  }, []);
+
+  // Load on screen focus and whenever period/custom range changes. Single effect avoids
+  // double-fetch races that were causing hard crashes on some Android devices.
+  useFocusEffect(useCallback(() => {
+    load(period, customStart, customEnd).catch(() => undefined);
+  }, [load, period, customStart, customEnd]));
+  useEffect(() => {
+    apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined);
+  }, []);
 
   if (!can("reports")) {
     return (
@@ -313,15 +349,15 @@ export default function LaporanScreen() {
           <View style={styles.card} testID="report-produk-list">
             <Text style={styles.cardTitle}>Produk · {periodLabel}</Text>
             {products.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada data penjualan.</Text> : products.map((p, idx) => (
-              <View key={p.product_id} style={styles.listRow}>
+              <View key={p.product_id ?? idx} style={styles.listRow}>
                 <View style={[styles.settingIcon, { backgroundColor: idx < 3 ? colors.brandPrimary : colors.brandTertiary }]}>
                   <Text style={{ color: idx < 3 ? colors.onBrandPrimary : colors.brandPrimary, fontWeight: "800" }}>{idx + 1}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.productName}>{p.name}</Text>
-                  <Text style={styles.muted}>{p.quantity} unit · omzet {formatRupiah(p.revenue)}</Text>
+                  <Text style={styles.productName}>{p.name ?? "-"}</Text>
+                  <Text style={styles.muted}>{p.quantity ?? 0} unit · omzet {formatRupiah(p.revenue ?? 0)}</Text>
                 </View>
-                <Text style={[styles.productName, { color: colors.success }]}>+{formatRupiah(p.profit)}</Text>
+                <Text style={[styles.productName, { color: colors.success }]}>+{formatRupiah(p.profit ?? 0)}</Text>
               </View>
             ))}
           </View>
@@ -330,71 +366,82 @@ export default function LaporanScreen() {
         {tab === "pelanggan" ? (
           <View style={styles.card} testID="report-pelanggan-list">
             <Text style={styles.cardTitle}>Pelanggan · {periodLabel}</Text>
-            {customers.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada transaksi pelanggan.</Text> : customers.map((c, idx) => (
-              <View key={`${c.customer_id ?? c.customer_name}-${idx}`} style={styles.listRow}>
-                <View style={styles.avatar}><Text style={styles.avatarText}>{c.customer_name.slice(0, 1).toUpperCase()}</Text></View>
+            {customers.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada transaksi pelanggan.</Text> : customers.map((c, idx) => {
+              const cname = (typeof c?.customer_name === "string" && c.customer_name) ? c.customer_name : "Umum";
+              return (
+              <View key={`${c.customer_id ?? cname}-${idx}`} style={styles.listRow}>
+                <View style={styles.avatar}><Text style={styles.avatarText}>{cname.slice(0, 1).toUpperCase()}</Text></View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.productName}>{c.customer_name}</Text>
-                  <Text style={styles.muted}>{c.transaction_count} transaksi · laba {formatRupiah(c.profit)}</Text>
-                  {c.outstanding > 0 ? <Text style={{ color: colors.warning, fontSize: 12, marginTop: 3, fontWeight: "700" }}>Piutang {formatRupiah(c.outstanding)}</Text> : null}
+                  <Text style={styles.productName}>{cname}</Text>
+                  <Text style={styles.muted}>{c.transaction_count ?? 0} transaksi · laba {formatRupiah(c.profit ?? 0)}</Text>
+                  {(c.outstanding ?? 0) > 0 ? <Text style={{ color: colors.warning, fontSize: 12, marginTop: 3, fontWeight: "700" }}>Piutang {formatRupiah(c.outstanding ?? 0)}</Text> : null}
                 </View>
-                <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(c.total_spent)}</Text>
+                <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(c.total_spent ?? 0)}</Text>
               </View>
-            ))}
+            );})}
           </View>
         ) : null}
 
         {tab === "operator" ? (
           <View style={styles.card} testID="report-operator-list">
             <Text style={styles.cardTitle}>Operator / karyawan · {periodLabel}</Text>
-            {operators.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada transaksi operator.</Text> : operators.map((o, idx) => (
-              <Pressable key={`${o.operator_id ?? o.name}-${idx}`} testID={`op-row-${o.operator_id ?? "none"}`} onPress={() => openOperator(o)} style={({ pressed }) => [styles.listRow, pressed && { opacity: 0.7 }]}>
-                <View style={styles.avatar}><Text style={styles.avatarText}>{o.name.slice(0, 1).toUpperCase()}</Text></View>
+            {operators.length === 0 ? <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada transaksi operator.</Text> : operators.map((o, idx) => {
+              const label = (typeof o?.name === "string" && o.name) ? o.name : "-";
+              return (
+              <Pressable key={`${o.operator_id ?? label}-${idx}`} testID={`op-row-${o.operator_id ?? "none"}`} onPress={() => openOperator(o)} style={({ pressed }) => [styles.listRow, pressed && { opacity: 0.7 }]}>
+                <View style={styles.avatar}><Text style={styles.avatarText}>{label.slice(0, 1).toUpperCase()}</Text></View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.productName}>{o.name}</Text>
-                  <Text style={styles.muted}>{o.transaction_count} transaksi · laba {formatRupiah(o.profit)}</Text>
+                  <Text style={styles.productName}>{label}</Text>
+                  <Text style={styles.muted}>{o.transaction_count ?? 0} transaksi · laba {formatRupiah(o.profit ?? 0)}</Text>
                   <Text style={[styles.muted, { fontSize: 10, marginTop: 2 }]}>Ketuk untuk lihat barang terjual</Text>
                 </View>
-                <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(o.total_sales)}</Text>
+                <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(o.total_sales ?? 0)}</Text>
               </Pressable>
-            ))}
+            );})}
           </View>
         ) : null}
 
         {tab === "barang" ? (
           <View style={styles.card} testID="report-barang-list">
             <Text style={styles.cardTitle}>Detail barang terjual · {periodLabel}</Text>
-            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>{salesItems.length} baris · total {formatRupiah(salesItems.reduce((s, r) => s + r.subtotal, 0))}</Text>
-            {salesItems.length === 0 ? <Text style={styles.muted}>Belum ada barang terjual.</Text> : salesItems.map((r, i) => (
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>{salesItems.length} baris · total {formatRupiah(salesItems.reduce((s, r) => s + (r?.subtotal ?? 0), 0))}</Text>
+            {salesItems.length === 0 ? <Text style={styles.muted}>Belum ada barang terjual.</Text> : salesItems.slice(0, 300).map((r, i) => {
+              const safeDate = (() => { try { return new Date(r.created_at).toLocaleString("id-ID"); } catch { return r.created_at ?? "-"; } })();
+              return (
               <View key={`${r.transaction_id}-${r.product_id}-${i}`} style={styles.listRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.productName}>{r.name}{r.unit ? ` · ${r.unit}` : ""}</Text>
-                  <Text style={styles.muted}>{new Date(r.created_at).toLocaleString("id-ID")} · {r.invoice_no}</Text>
-                  <Text style={[styles.muted, { marginTop: 2 }]}>{r.customer_name} · oleh {r.operator_name}</Text>
+                  <Text style={styles.productName}>{r.name ?? "-"}{r.unit ? ` · ${r.unit}` : ""}</Text>
+                  <Text style={styles.muted}>{safeDate} · {r.invoice_no ?? "-"}</Text>
+                  <Text style={[styles.muted, { marginTop: 2 }]}>{r.customer_name ?? "Umum"} · oleh {r.operator_name ?? "-"}</Text>
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
-                  <Text style={styles.productName}>{r.quantity} × {formatRupiah(r.price)}</Text>
-                  <Text style={[styles.muted, { color: colors.success }]}>{formatRupiah(r.subtotal)}</Text>
+                  <Text style={styles.productName}>{r.quantity ?? 0} × {formatRupiah(r.price ?? 0)}</Text>
+                  <Text style={[styles.muted, { color: colors.success }]}>{formatRupiah(r.subtotal ?? 0)}</Text>
                 </View>
               </View>
-            ))}
+            );})}
           </View>
         ) : null}
 
         {tab === "transaksi" ? (
           <View style={styles.card} testID="report-transaksi-list">
             <Text style={styles.cardTitle}>Detail Transaksi Penjualan · {periodLabel}</Text>
-            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>{transactions.length} transaksi · total omzet {formatRupiah(transactions.reduce((s, t) => s + t.total, 0))}</Text>
-            {transactions.length === 0 ? <Text style={styles.muted}>Belum ada transaksi penjualan.</Text> : transactions.map((t) => (
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>{transactions.length} transaksi · total omzet {formatRupiah(transactions.reduce((s, t) => s + (t?.total ?? 0), 0))}</Text>
+            {transactions.length === 0 ? <Text style={styles.muted}>Belum ada transaksi penjualan.</Text> : transactions.map((t) => {
+              const safeDate = (() => {
+                try { return new Date(t.created_at).toLocaleString("id-ID"); } catch { return t.created_at ?? "-"; }
+              })();
+              const itemsLen = Array.isArray(t.items) ? t.items.length : 0;
+              return (
               <View key={t.id} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
                 <View style={styles.between}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{t.invoice_no}</Text>
-                    <Text style={styles.muted}>{new Date(t.created_at).toLocaleString("id-ID")}</Text>
-                    <Text style={[styles.muted, { marginTop: 2 }]}>{t.customer_name} · oleh {t.created_by_name ?? "-"}</Text>
-                    <Text style={[styles.muted, { marginTop: 2 }]}>{t.items.length} item · {t.payment_method_label || PAYMENT_LABELS[t.payment_method] || t.payment_method}</Text>
+                    <Text style={styles.productName}>{t.invoice_no ?? "-"}</Text>
+                    <Text style={styles.muted}>{safeDate}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>{t.customer_name ?? "Umum"} · oleh {t.created_by_name ?? "-"}</Text>
+                    <Text style={[styles.muted, { marginTop: 2 }]}>{itemsLen} item · {t.payment_method_label || PAYMENT_LABELS[t.payment_method] || t.payment_method || "-"}</Text>
                   </View>
-                  <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(t.total)}</Text>
+                  <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(t.total ?? 0)}</Text>
                 </View>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                   <Pressable
@@ -441,7 +488,7 @@ export default function LaporanScreen() {
                   </Pressable>
                 </View>
               </View>
-            ))}
+            );})}
           </View>
         ) : null}
 
