@@ -25,6 +25,11 @@ const ROUTES: { method: Method; pattern: string; handler: Handler; public?: bool
   { method: "GET", pattern: "/auth/me", handler: h.meHandler },
   { method: "POST", pattern: "/auth/logout", handler: h.logoutHandler },
   { method: "PUT", pattern: "/profile", handler: h.changePasswordHandler },
+  { method: "PUT", pattern: "/profile/emergency", handler: h.emergencyProfileHandler },
+
+  // Backup / Restore
+  { method: "GET", pattern: "/backup", handler: h.backup },
+  { method: "POST", pattern: "/restore", handler: h.restoreHandler },
 
   // Settings
   { method: "GET", pattern: "/settings", handler: h.getSettings },
@@ -111,7 +116,6 @@ const ROUTES: { method: Method; pattern: string; handler: Handler; public?: bool
 
   // Integrations / meta
   { method: "GET", pattern: "/integrations/status", handler: h.integrationsStatus },
-  { method: "GET", pattern: "/backup", handler: h.backup },
 
   // Admin
   { method: "POST", pattern: "/admin/reset-transactions", handler: h.resetTransactions },

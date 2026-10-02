@@ -43,14 +43,26 @@ export default function BarcodePrintScreen() {
 
   const printNow = async () => {
     if (totalLabels === 0) return toast.error("Pilih minimal 1 produk");
-    const layout = LAYOUTS.find((l) => l.key === layoutKey) ?? LAYOUTS[1];
+    if (!settings) return toast.error("Pengaturan belum siap", "Coba sebentar lagi");
     const labels = selectedProducts.flatMap((p) => Array.from({ length: selected[p.id] }, () => ({
-      name: p.name, code: p.barcode || p.sku || p.id.slice(0, 10).toUpperCase(), price: showPrice ? p.price : undefined,
+      name: p.name,
+      code: p.barcode || p.sku || p.id.slice(0, 10).toUpperCase(),
+      price: showPrice ? p.price : undefined,
     })));
     setBusy(true);
     try {
-      await printBarcodeSheet(labels, layout, settings?.business_name ?? "");
-      toast.success("Barcode PDF siap", `${totalLabels} label dicetak`);
+      // 1) Coba cetak langsung ke printer thermal Bluetooth
+      const { getPairedPrinter, isPrinterAvailable, printBarcodeLabels } = await import("@/src/bt-printer");
+      const [paired, available] = await Promise.all([getPairedPrinter(), isPrinterAvailable()]);
+      if (available && paired) {
+        await printBarcodeLabels(labels, settings);
+        toast.success("Barcode tercetak", `${totalLabels} label · ${paired.name}`);
+      } else {
+        // 2) Fallback: PDF via expo-print (untuk printer A4 / dibagikan)
+        const layout = LAYOUTS.find((l) => l.key === layoutKey) ?? LAYOUTS[1];
+        await printBarcodeSheet(labels, layout, settings.business_name ?? "");
+        toast.info("PDF siap", "Printer Bluetooth belum terhubung. Kami buat PDF untuk dibagikan.");
+      }
     } catch (e) { toast.error("Gagal", e instanceof Error ? e.message : undefined); }
     finally { setBusy(false); }
   };

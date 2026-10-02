@@ -15,7 +15,7 @@
 import * as Linking from "expo-linking";
 import { PermissionsAndroid, Platform } from "react-native";
 
-import { apiRequest, formatRupiah, PAYMENT_LABELS, type BusinessSettings, type TransactionDoc } from "@/src/api";
+import { formatRupiah, PAYMENT_LABELS, type BusinessSettings, type TransactionDoc } from "@/src/api";
 import { storage } from "@/src/utils/storage";
 
 export type PairedPrinter = { address: string; name: string };
@@ -147,27 +147,63 @@ export async function getKitchenPrinter(): Promise<PairedPrinter | null> {
   catch { return null; }
 }
 
-// ---------- Logo ESC/POS (cached) ----------
-type LogoCache = { bytes_base64: string; width: 58 | 80; fetched_at: number };
-async function fetchLogoBytes(paperWidth: "58mm" | "80mm"): Promise<Uint8Array | null> {
+// ---------- Logo ESC/POS (cached, dibuat lokal dari base64 image) ----------
+type LogoCache = { logo_hash: string; bytes_base64: string; width: 58 | 80; fetched_at: number };
+
+/**
+ * Hitung hash cepat dari logo base64 untuk invalidasi otomatis saat user
+ * mengganti logo.
+ */
+function hashLogo(logo: string): string {
+  let h = 2166136261 >>> 0;
+  // Hanya sample 2000 karakter pertama + panjang total agar cepat & stabil.
+  const sample = logo.slice(0, 2000) + "|" + logo.length;
+  for (let i = 0; i < sample.length; i++) {
+    h ^= sample.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16);
+}
+
+async function fetchLogoBytes(paperWidth: "58mm" | "80mm", logoBase64: string | null | undefined): Promise<Uint8Array | null> {
+  if (!logoBase64) return null;
   const cacheKey = `${LOGO_CACHE_KEY}_${paperWidth}`;
+  const logoHash = hashLogo(logoBase64);
   try {
     const cachedRaw = await storage.secureGet<string | null>(cacheKey, null);
     if (cachedRaw) {
       const parsed = JSON.parse(cachedRaw) as LogoCache;
-      // 1 jam cache
-      if (parsed.bytes_base64 && Date.now() - parsed.fetched_at < 60 * 60 * 1000) {
+      // Cache valid bila hash logo sama (user belum mengganti logo).
+      if (parsed.logo_hash === logoHash && parsed.bytes_base64) {
         return Uint8Array.from(atob(parsed.bytes_base64), (c) => c.charCodeAt(0));
       }
     }
   } catch { /* ignore */ }
+
   try {
-    const res = await apiRequest<{ bytes_base64: string }>(`/settings/logo-escpos?width=${paperWidth}`);
-    if (!res.bytes_base64) return null;
-    const cache: LogoCache = { bytes_base64: res.bytes_base64, width: paperWidth === "80mm" ? 80 : 58, fetched_at: Date.now() };
-    await storage.secureSet(cacheKey, JSON.stringify(cache));
-    return Uint8Array.from(atob(res.bytes_base64), (c) => c.charCodeAt(0));
-  } catch { return null; }
+    // Lazy import agar modul image-manipulator tidak dibebankan di web preview.
+    const { escposFromImageBase64 } = await import("@/src/image-to-escpos");
+    const bytes = await escposFromImageBase64(logoBase64, paperWidth);
+    if (!bytes || !bytes.length) return null;
+    // Simpan ke cache
+    try {
+      let bin = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.slice(i, i + chunk));
+      // eslint-disable-next-line no-restricted-globals
+      const b64 = typeof btoa !== "undefined" ? btoa(bin) : "";
+      const cache: LogoCache = {
+        logo_hash: logoHash,
+        bytes_base64: b64,
+        width: paperWidth === "80mm" ? 80 : 58,
+        fetched_at: Date.now(),
+      };
+      await storage.secureSet(cacheKey, JSON.stringify(cache));
+    } catch { /* cache best-effort */ }
+    return bytes;
+  } catch {
+    return null;
+  }
 }
 
 /** Invalidate logo cache (e.g., setelah user upload logo baru). */
@@ -255,7 +291,7 @@ function padLine(left: string, right: string, cols: number): string {
 export async function printReceipt(
   tx: TransactionDoc,
   settings: BusinessSettings,
-  options: { openCashDrawer?: boolean; copies?: number } = {},
+  options: { openCashDrawer?: boolean; copies?: number; preview?: boolean } = {},
 ): Promise<void> {
   const widthMm: 58 | 80 = settings.receipt_width === "80mm" ? 80 : 58;
   const paperWidth: "58mm" | "80mm" = widthMm === 80 ? "80mm" : "58mm";
@@ -268,9 +304,9 @@ export async function printReceipt(
   // --- Logo (ESC/POS raster, cached) ---
   if (settings.logo_base64) {
     try {
-      const logoBytes = await fetchLogoBytes(paperWidth);
+      const logoBytes = await fetchLogoBytes(paperWidth, settings.logo_base64);
       if (logoBytes && logoBytes.length) b.push(...Array.from(logoBytes));
-    } catch { /* abaikan logo kalau gagal fetch */ }
+    } catch { /* abaikan logo kalau gagal konversi */ }
   }
 
   b.align("center").bold(true).double(true).line(settings.business_name).double(false).bold(false);
@@ -298,11 +334,16 @@ export async function printReceipt(
   if (tx.tax_amount) b.line(padLine(`${settings.tax_label || "Pajak"} ${tx.tax_percent}%`, formatRupiah(tx.tax_amount), cols));
   if (tx.shipping) b.line(padLine("Ongkir", formatRupiah(tx.shipping), cols));
   b.bold(true).double(true).line(padLine("TOTAL", formatRupiah(tx.total), Math.max(14, Math.floor(cols / 2)))).double(false).bold(false);
-  b.line(padLine("Metode", tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method || "-", cols));
-  if (tx.paid_amount) b.line(padLine("Dibayar", formatRupiah(tx.paid_amount), cols));
-  if ((tx.outstanding ?? 0) > 0) b.line(padLine("Sisa Htg", formatRupiah(tx.outstanding ?? 0), cols));
-  const change = (tx.paid_amount ?? 0) - tx.total;
-  if (change > 0) b.line(padLine("Kembalian", formatRupiah(change), cols));
+  if (options.preview) {
+    // Preview sebelum simpan transaksi — tidak tampilkan info pembayaran.
+    b.align("center").bold(true).line("** BELUM DIBAYAR **").bold(false).align("left");
+  } else {
+    b.line(padLine("Metode", tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method || "-", cols));
+    if (tx.paid_amount) b.line(padLine("Dibayar", formatRupiah(tx.paid_amount), cols));
+    if ((tx.outstanding ?? 0) > 0) b.line(padLine("Sisa Htg", formatRupiah(tx.outstanding ?? 0), cols));
+    const change = (tx.paid_amount ?? 0) - tx.total;
+    if (change > 0) b.line(padLine("Kembalian", formatRupiah(change), cols));
+  }
   b.line(sep);
   const footerLines = (settings.footer_lines ?? []).filter(Boolean).slice(0, 4);
   const effectiveFooter = footerLines.length ? footerLines : (settings.footer_note ? [settings.footer_note] : ["Terima kasih"]);
@@ -349,6 +390,61 @@ export async function openCashDrawerOnly(): Promise<void> {
   const b = new EscposBuilder();
   b.init().cashDrawer().feed(1);
   await sendBase64(b.base64());
+}
+
+// ---------- Barcode printing ESC/POS ----------
+/**
+ * Cetak label barcode via printer thermal Bluetooth.
+ *
+ * Setiap label berisi: nama produk (bold), barcode CODE128 (ESC/POS native),
+ * optional harga. Dicetak langsung dari printer struk Bluetooth yang sudah
+ * terkoneksi. 1 label = 1 "struk" kecil.
+ */
+export async function printBarcodeLabels(
+  labels: { name: string; code: string; price?: number }[],
+  settings: BusinessSettings,
+): Promise<void> {
+  if (labels.length === 0) return;
+  const printer = await getPairedPrinter();
+  if (!printer) throw new Error("Belum ada printer tersimpan. Pair printer di menu Printer Bluetooth dulu.");
+  const widthMm: 58 | 80 = settings.receipt_width === "80mm" ? 80 : 58;
+  const cols = widthMm === 80 ? 48 : 32;
+
+  const b = new EscposBuilder();
+  b.init().codePage();
+  for (const label of labels) {
+    const code = (label.code || label.name).replace(/[^\x20-\x7e]/g, "").slice(0, 24) || "NA";
+    b.align("center");
+    b.bold(true).line(label.name.slice(0, cols));
+    b.bold(false);
+
+    // ESC/POS native barcode command untuk CODE128:
+    //   GS h n   → tinggi barcode (dots)
+    //   GS w n   → lebar bar (modul width)
+    //   GS H n   → HRI position (0=none, 2=below)
+    //   GS f n   → font HRI (0=standard)
+    //   GS k 73 len <data...>   → CODE128 (73), format B
+    b.push(GS, 0x68, 70);         // tinggi 70 dots
+    b.push(GS, 0x77, widthMm === 80 ? 3 : 2); // lebar 2-3 (lebih kecil di 58mm)
+    b.push(GS, 0x48, 2);          // HRI di bawah barcode
+    b.push(GS, 0x66, 0);          // font HRI 0 (kecil & rapi)
+
+    // CODE128 format B: diawali { B
+    const data = "{B" + code;
+    b.push(GS, 0x6b, 73, data.length);
+    for (let i = 0; i < data.length; i++) b.push(data.charCodeAt(i));
+    b.feed(1);
+
+    if (typeof label.price === "number") {
+      b.align("center").bold(true).line(formatRupiah(label.price)).bold(false);
+    }
+    if (settings.business_name) {
+      b.align("center").line(settings.business_name.slice(0, cols));
+    }
+    b.feed(1);
+  }
+  b.feed(2).cut();
+  await sendBase64ToPrinter(printer, b.base64(), 1);
 }
 
 /** Buka pengaturan Bluetooth Android (shortcut dari UI). */

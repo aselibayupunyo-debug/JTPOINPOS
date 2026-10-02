@@ -322,11 +322,6 @@ export async function createTransaction(ctx: Ctx): Promise<any> {
 
   // Validate retur
   if (type === "sale_return" || type === "purchase_return") {
-    if (!body.admin_password) throw new HttpError(400, "Retur transaksi butuh password");
-    const row = await db.getFirstAsync<any>("SELECT password_hash, password_salt FROM users WHERE id = ?", [u.id]);
-    if (!row || !(await verifyPassword(String(body.admin_password), row.password_hash, row.password_salt))) {
-      throw new HttpError(401, "Password admin salah");
-    }
     if (body.original_transaction_id) {
       const orig = await db.getFirstAsync<{ json: string }>("SELECT json FROM transactions_t WHERE id = ? AND business_id = ?", [body.original_transaction_id, u.business_id]);
       if (!orig) throw new HttpError(404, "Transaksi asli tidak ditemukan");
@@ -868,6 +863,107 @@ export async function deleteAllProducts(ctx: Ctx): Promise<any> {
   await db.runAsync("DELETE FROM products WHERE business_id = ?", [u.business_id]);
   await appendAudit(u.business_id, u, "delete-all", "products", {});
   return { ok: true };
+}
+
+// ---------- EMERGENCY PROFILE UPDATE ----------
+/**
+ * Reset profil pemilik tanpa butuh password lama. Dipanggil setelah user
+ * memasukkan password darurat di layar login (validasinya di sisi frontend
+ * karena hanya pemilik perangkat yang punya akses fisik).
+ *
+ * Hanya boleh dipanggil untuk akun owner (role=owner) milik user yang login.
+ */
+export async function emergencyProfileHandler(ctx: Ctx): Promise<any> {
+  if (!ctx.user) throw new HttpError(401, "Sesi tidak valid");
+  if (ctx.user.role !== "owner") throw new HttpError(403, "Mode darurat hanya untuk akun pemilik");
+  const { new_password, display_name, username } = ctx.body || {};
+  const db = await getDb();
+  if (new_password) {
+    if (String(new_password).length < 6) throw new HttpError(400, "Password baru minimal 6 karakter");
+    const { hash, salt } = await hashPassword(String(new_password));
+    await db.runAsync("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?", [hash, salt, ctx.user.id]);
+  }
+  if (display_name) {
+    await db.runAsync("UPDATE users SET display_name = ? WHERE id = ?", [String(display_name), ctx.user.id]);
+  }
+  if (username) {
+    const existing = await db.getFirstAsync<any>("SELECT id FROM users WHERE username = ? AND id != ?", [String(username), ctx.user.id]);
+    if (existing) throw new HttpError(400, "Username sudah dipakai");
+    await db.runAsync("UPDATE users SET username = ? WHERE id = ?", [String(username), ctx.user.id]);
+  }
+  return meFromUserId(ctx.user.id);
+}
+
+// ---------- RESTORE from backup JSON ----------
+/**
+ * Memulihkan seluruh data dari file backup JSON (hasil `/backup`).
+ * Semua tabel di-replace untuk business user saat ini.
+ */
+export async function restoreHandler(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const payload = ctx.body || {};
+  const db = await getDb();
+  const bid = u.business_id;
+
+  const restored: Record<string, number> = {};
+
+  async function replaceTable(table: string, items: any[], hasCreated: boolean) {
+    await db.runAsync(`DELETE FROM ${table} WHERE business_id = ?`, [bid]);
+    for (const raw of items || []) {
+      const doc = { ...raw, business_id: bid };
+      const id = String(doc.id || uuid());
+      doc.id = id;
+      if (hasCreated) {
+        const createdAt = String(doc.created_at || nowIso());
+        if (table === "transactions_t") {
+          await db.runAsync(
+            `INSERT INTO ${table} (id,business_id,transaction_type,created_at,json) VALUES (?,?,?,?,?)`,
+            [id, bid, String(doc.transaction_type || "sale"), createdAt, JSON.stringify(doc)],
+          );
+        } else {
+          await db.runAsync(
+            `INSERT INTO ${table} (id,business_id,created_at,json) VALUES (?,?,?,?)`,
+            [id, bid, createdAt, JSON.stringify(doc)],
+          );
+        }
+      } else if (table === "products") {
+        const now = nowIso();
+        await db.runAsync(
+          `INSERT INTO products (id,business_id,json,created_at,updated_at) VALUES (?,?,?,?,?)`,
+          [id, bid, JSON.stringify(doc), String(doc.created_at || now), String(doc.updated_at || now)],
+        );
+      } else if (table === "contacts") {
+        await db.runAsync(
+          `INSERT INTO contacts (id,business_id,kind,json) VALUES (?,?,?,?)`,
+          [id, bid, String(doc.kind || "customer"), JSON.stringify(doc)],
+        );
+      } else {
+        await db.runAsync(
+          `INSERT INTO ${table} (id,business_id,json) VALUES (?,?,?)`,
+          [id, bid, JSON.stringify(doc)],
+        );
+      }
+    }
+    restored[table] = (items || []).length;
+  }
+
+  if (payload.settings) {
+    await saveSettings(bid, { ...payload.settings, business_id: bid });
+    restored.settings = 1;
+  }
+  await replaceTable("products", payload.products || [], false);
+  await replaceTable("categories", payload.categories || [], false);
+  await replaceTable("payment_methods", payload.payment_methods || [], false);
+  await replaceTable("contacts", payload.contacts || [], false);
+  await replaceTable("transactions_t", payload.transactions || [], true);
+  await replaceTable("cash_entries", payload.cash_entries || [], true);
+  await replaceTable("debts", payload.debts || [], false);
+  await replaceTable("parked", payload.parked || [], true);
+  await replaceTable("shifts", payload.shifts || [], true);
+  await replaceTable("promos", payload.promos || [], false);
+
+  await appendAudit(bid, u, "restore", "backup", { restored });
+  return { restored };
 }
 
 // ---------- INTEGRATIONS/STATUS ----------

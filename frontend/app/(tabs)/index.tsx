@@ -195,9 +195,18 @@ export default function KasirScreen() {
     }
     addLineToCart(product, product.base_unit ?? "Pcs", 1, priceAtLevel);
   };
-  const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: Math.max(0, Math.round((i.quantity + delta) * 1000) / 1000) } : i).filter((i) => i.quantity > 0));
-  const setQty = (lineId: string, next: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: Math.max(0, Math.round(next * 1000) / 1000) } : i).filter((i) => i.quantity > 0));
-  const changePrice = (lineId: string, nextPrice: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, price: nextPrice } : i));
+  const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: Math.max(0, Math.round((Number(i.quantity || 0) + delta) * 100) / 100) } : i).filter((i) => i.quantity > 0));
+  const setQty = (lineId: string, next: number) => {
+    const safe = Number(next);
+    if (!Number.isFinite(safe)) return;
+    const rounded = Math.max(0, Math.round(safe * 100) / 100);
+    setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: rounded } : i).filter((i) => i.quantity > 0));
+  };
+  const changePrice = (lineId: string, nextPrice: number) => {
+    const safe = Number(nextPrice);
+    if (!Number.isFinite(safe) || safe < 0) return;
+    setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, price: Math.round(safe) } : i));
+  };
   const changeDiscount = (lineId: string, nextDisc: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, manual_discount: Math.max(0, nextDisc) } : i));
   const removeFromCart = (lineId: string) => setCart((c) => c.filter((i) => i.line_id !== lineId));
 
@@ -616,8 +625,8 @@ function CheckoutSheet({
   const fmtQty = (q: number): string => {
     const n = Number(q);
     if (!Number.isFinite(n)) return "0";
-    // Show up to 3 decimals, strip trailing zeros
-    return n.toLocaleString("id-ID", { maximumFractionDigits: 3 });
+    // Show up to 2 decimals, strip trailing zeros
+    return n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
   };
   const [discType, setDiscType] = useState<"amount" | "percent">("amount");
   const [discValue, setDiscValue] = useState("");
@@ -685,9 +694,23 @@ function CheckoutSheet({
                           testID={`edit-price-${key}`}
                           keyboardType="number-pad"
                           autoFocus
-                          defaultValue={String(item.price)}
-                          onBlur={(e) => { changePrice(key, Number(e.nativeEvent.text.replace(/\D/g, "")) || item.price); setEditing(null); }}
-                          onSubmitEditing={(e) => { changePrice(key, Number(e.nativeEvent.text.replace(/\D/g, "")) || item.price); setEditing(null); }}
+                          defaultValue={String(Math.round(Number(item.price) || 0))}
+                          onBlur={(e) => {
+                            try {
+                              const raw = String(e?.nativeEvent?.text ?? "").replace(/\D/g, "");
+                              const num = Number(raw);
+                              if (Number.isFinite(num) && num >= 0) changePrice(key, num);
+                            } catch { /* ignore */ }
+                            setEditing(null);
+                          }}
+                          onSubmitEditing={(e) => {
+                            try {
+                              const raw = String(e?.nativeEvent?.text ?? "").replace(/\D/g, "");
+                              const num = Number(raw);
+                              if (Number.isFinite(num) && num >= 0) changePrice(key, num);
+                            } catch { /* ignore */ }
+                            setEditing(null);
+                          }}
                           style={[styles.input, { marginBottom: 0, flex: 1, minHeight: 36 }]}
                         />
                       </View>
@@ -718,21 +741,30 @@ function CheckoutSheet({
                         testID={`qty-input-${key}`}
                         keyboardType="decimal-pad"
                         autoFocus
-                        defaultValue={String(item.quantity)}
+                        defaultValue={String(Number(item.quantity) || 0)}
                         selectTextOnFocus
                         onBlur={(e) => {
-                          const raw = e.nativeEvent.text.replace(",", ".").replace(/[^\d.]/g, "");
-                          const num = Number(raw);
-                          if (Number.isFinite(num) && num > 0) setQty(key, num);
+                          try {
+                            const raw = String(e?.nativeEvent?.text ?? "").replace(",", ".").replace(/[^\d.]/g, "");
+                            // Keep max 2 decimals
+                            const match = raw.match(/^(\d*)(\.(\d{0,2}))?/);
+                            const normalized = match ? `${match[1] || "0"}${match[2] ? "." + (match[3] || "") : ""}` : raw;
+                            const num = Number(normalized);
+                            if (Number.isFinite(num) && num > 0) setQty(key, num);
+                          } catch { /* ignore malformed input */ }
                           setQtyEditing(null);
                         }}
                         onSubmitEditing={(e) => {
-                          const raw = e.nativeEvent.text.replace(",", ".").replace(/[^\d.]/g, "");
-                          const num = Number(raw);
-                          if (Number.isFinite(num) && num > 0) setQty(key, num);
+                          try {
+                            const raw = String(e?.nativeEvent?.text ?? "").replace(",", ".").replace(/[^\d.]/g, "");
+                            const match = raw.match(/^(\d*)(\.(\d{0,2}))?/);
+                            const normalized = match ? `${match[1] || "0"}${match[2] ? "." + (match[3] || "") : ""}` : raw;
+                            const num = Number(normalized);
+                            if (Number.isFinite(num) && num > 0) setQty(key, num);
+                          } catch { /* ignore */ }
                           setQtyEditing(null);
                         }}
-                        style={{ minWidth: 48, maxWidth: 72, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary, paddingVertical: 2 }}
+                        style={{ minWidth: 56, maxWidth: 86, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary, paddingVertical: 2 }}
                       />
                     ) : (
                       <Pressable testID={`qty-edit-${key}`} onPress={() => setQtyEditing(key)}>
@@ -887,7 +919,7 @@ function CheckoutSheet({
                         created_by_name: "",
                         status: "active" as const,
                       };
-                      await printReceipt(fakeTx, settings, { openCashDrawer: settings.cashdrawer_enabled });
+                      await printReceipt(fakeTx, settings, { openCashDrawer: settings.cashdrawer_enabled, preview: true });
                       toast.success("Struk tercetak", `${paired.name} · ${settings.receipt_width}`);
                       return;
                     }

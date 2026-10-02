@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, formatRupiah, TransactionDoc } from "@/src/api";
@@ -19,8 +19,7 @@ export default function ReturnsScreen() {
   const [kind, setKind] = useState<Kind>("sale");
   const [list, setList] = useState<TransactionDoc[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [pwModal, setPwModal] = useState<null | { tx: TransactionDoc }>(null);
-  const [password, setPassword] = useState("");
+  const [confirmTx, setConfirmTx] = useState<TransactionDoc | null>(null);
 
   const load = async (k: Kind) => {
     try { setList(await apiRequest<TransactionDoc[]>(`/transactions?kind=${k}&limit=50`)); }
@@ -30,7 +29,7 @@ export default function ReturnsScreen() {
 
   const fmtQty = (q: number) => Number(q).toLocaleString("id-ID", { maximumFractionDigits: 3 });
 
-  const doReturn = async (tx: TransactionDoc, adminPassword: string) => {
+  const doReturn = async (tx: TransactionDoc) => {
     setBusyId(tx.id);
     try {
       await apiRequest("/transactions", {
@@ -42,7 +41,6 @@ export default function ReturnsScreen() {
           customer_name: tx.customer_name,
           note: `Retur ${tx.invoice_no}`,
           original_transaction_id: tx.id,
-          admin_password: adminPassword,
           items: tx.items.map((i) => ({
             product_id: i.product_id,
             name: i.name,
@@ -55,22 +53,10 @@ export default function ReturnsScreen() {
         }),
       });
       toast.success("Retur dicatat", `${tx.invoice_no} dikembalikan`);
-      setPwModal(null);
-      setPassword("");
+      setConfirmTx(null);
       await load(kind);
     } catch (e) { toast.error("Retur gagal", e instanceof Error ? e.message : undefined); }
     finally { setBusyId(null); }
-  };
-
-  const openReturnModal = (tx: TransactionDoc) => {
-    setPassword("");
-    setPwModal({ tx });
-  };
-
-  const confirmReturn = async () => {
-    if (!pwModal) return;
-    if (!password.trim()) return toast.error("Password diperlukan");
-    await doReturn(pwModal.tx, password.trim());
   };
 
   // Hanya tampilkan transaksi yang belum diretur & belum dibatalkan
@@ -111,7 +97,7 @@ export default function ReturnsScreen() {
             <Pressable
               testID={`do-return-${tx.id}`}
               disabled={busyId === tx.id}
-              onPress={() => openReturnModal(tx)}
+              onPress={() => setConfirmTx(tx)}
               style={[styles.dangerButton, { marginTop: 12 }]}
             >
               {busyId === tx.id ? <ActivityIndicator color={colors.error} /> : <Text style={styles.dangerText}>Retur transaksi ini</Text>}
@@ -120,45 +106,35 @@ export default function ReturnsScreen() {
         ))}
       </ScrollView>
 
-      <Modal visible={!!pwModal} transparent animationType="fade" onRequestClose={() => { setPwModal(null); setPassword(""); }}>
+      <Modal visible={!!confirmTx} transparent animationType="fade" onRequestClose={() => setConfirmTx(null)}>
         <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
           <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
-              <Ionicons name="lock-closed-outline" size={24} color={colors.error} />
-              <Text style={[styles.cardTitle, { marginLeft: 10, flex: 1 }]}>Konfirmasi retur</Text>
+              <Ionicons name="alert-circle" size={28} color={colors.error} />
+              <Text style={[styles.cardTitle, { marginLeft: 10, flex: 1, fontSize: 20 }]}>Apakah anda yakin??</Text>
             </View>
             <Text style={[styles.muted, { marginBottom: 10, lineHeight: 20 }]}>
-              Masukkan password admin/owner untuk melakukan retur{"\n"}
-              <Text style={{ fontWeight: "700" }}>{pwModal?.tx.invoice_no}</Text> · {pwModal ? formatRupiah(pwModal.tx.total) : ""}
+              Transaksi <Text style={{ fontWeight: "700", color: colors.onSurface }}>{confirmTx?.invoice_no}</Text> senilai{" "}
+              <Text style={{ fontWeight: "700", color: colors.onSurface }}>{confirmTx ? formatRupiah(confirmTx.total) : ""}</Text> akan diretur.
             </Text>
-            <TextInput
-              testID="return-password-input"
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password admin"
-              placeholderTextColor={colors.muted}
-              secureTextEntry
-              autoFocus
-              style={styles.input}
-            />
-            <Text style={[styles.muted, { fontSize: 11, marginBottom: 10 }]}>
-              ⚠️ Retur akan mengembalikan stok & tercatat permanen. Transaksi tidak dapat diretur lebih dari satu kali.
+            <Text style={[styles.muted, { fontSize: 11, marginBottom: 14 }]}>
+              ⚠️ Stok akan dikembalikan dan tercatat permanen. Transaksi tidak dapat diretur lebih dari satu kali.
             </Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
               <Pressable
                 testID="cancel-return"
-                onPress={() => { setPwModal(null); setPassword(""); }}
+                onPress={() => setConfirmTx(null)}
                 style={[styles.outlineButton, { flex: 1 }]}
               >
                 <Text style={styles.outlineText}>Batal</Text>
               </Pressable>
               <Pressable
                 testID="confirm-return"
-                onPress={confirmReturn}
+                onPress={() => confirmTx && doReturn(confirmTx)}
                 disabled={!!busyId}
                 style={[styles.dangerButton, { flex: 1 }, busyId && { opacity: 0.5 }]}
               >
-                {busyId ? <ActivityIndicator color={colors.error} /> : <Text style={styles.dangerText}>Retur sekarang</Text>}
+                {busyId ? <ActivityIndicator color={colors.error} /> : <Text style={styles.dangerText}>Ya, retur sekarang</Text>}
               </Pressable>
             </View>
           </View>
