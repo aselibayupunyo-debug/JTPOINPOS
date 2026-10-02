@@ -1,21 +1,76 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SvgXml } from "react-native-svg";
 
-import { apiRequest, BusinessSettings, Product } from "@/src/api";
+import { apiRequest, BusinessSettings, formatRupiah, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { Header } from "@/src/components/header";
+import { barcodeSvg, printBarcodeSheet } from "@/src/pdf";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
-import { printBarcodeSheet } from "@/src/pdf";
 
 const LAYOUTS = [
   { key: "small", label: "Kecil 38×25mm", perRow: 5, widthMm: 38, heightMm: 25 },
   { key: "medium", label: "Sedang 50×30mm", perRow: 4, widthMm: 50, heightMm: 30 },
   { key: "large", label: "Besar 70×40mm", perRow: 2, widthMm: 70, heightMm: 40 },
 ];
+
+type PreviewProps = {
+  name: string;
+  code: string;
+  price?: number;
+  businessName?: string;
+  paperWidth: "58mm" | "80mm";
+};
+
+/**
+ * Mock tampilan 1 label pada printer thermal.
+ * Lebar visual disesuaikan ke paperWidth: 58mm ≈ 230px, 80mm ≈ 320px.
+ */
+function LabelPreview({ name, code, price, businessName, paperWidth }: PreviewProps) {
+  const widthPx = paperWidth === "80mm" ? 320 : 230;
+  const svg = useMemo(() => {
+    try {
+      return barcodeSvg(code || name || "NA", { height: 14, scale: 2, includetext: true });
+    } catch {
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="30"><text x="4" y="20">${code}</text></svg>`;
+    }
+  }, [code, name]);
+
+  return (
+    <View
+      style={{
+        alignSelf: "center",
+        width: widthPx,
+        backgroundColor: "#ffffff",
+        borderWidth: 1,
+        borderColor: "#d4d4d4",
+        borderStyle: "dashed",
+        paddingVertical: 12,
+        paddingHorizontal: 10,
+        alignItems: "center",
+      }}
+    >
+      <Text numberOfLines={2} style={{ fontSize: 12, fontWeight: "800", color: "#111", textAlign: "center" }}>
+        {name || "Nama produk"}
+      </Text>
+      <View style={{ marginTop: 6, width: "100%", alignItems: "center" }}>
+        <SvgXml xml={svg} width={widthPx - 24} height={56} />
+      </View>
+      {typeof price === "number" ? (
+        <Text style={{ marginTop: 4, fontSize: 13, fontWeight: "900", color: "#111" }}>
+          {formatRupiah(price)}
+        </Text>
+      ) : null}
+      {businessName ? (
+        <Text style={{ marginTop: 4, fontSize: 9, color: "#666" }}>{businessName}</Text>
+      ) : null}
+    </View>
+  );
+}
 
 export default function BarcodePrintScreen() {
   const styles = useAppStyles();
@@ -40,6 +95,10 @@ export default function BarcodePrintScreen() {
 
   const totalLabels = Object.values(selected).reduce((a, b) => a + b, 0);
   const selectedProducts = products.filter((p) => (selected[p.id] ?? 0) > 0);
+
+  // Produk pertama yang dipilih untuk dipakai jadi contoh preview.
+  const previewProduct = selectedProducts[0] ?? null;
+  const paperWidth: "58mm" | "80mm" = settings?.receipt_width === "80mm" ? "80mm" : "58mm";
 
   const printNow = async () => {
     if (totalLabels === 0) return toast.error("Pilih minimal 1 produk");
@@ -78,6 +137,7 @@ export default function BarcodePrintScreen() {
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Ukuran stiker</Text>
+          <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>Hanya dipakai untuk cetak PDF (fallback). Printer thermal pakai lebar kertas: {paperWidth}.</Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
             {LAYOUTS.map((l) => (
               <Pressable key={l.key} testID={`layout-${l.key}`} onPress={() => setLayoutKey(l.key)} style={[{ paddingHorizontal: 14, minHeight: 44, borderRadius: 12, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }, layoutKey === l.key && { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]}>
@@ -90,6 +150,40 @@ export default function BarcodePrintScreen() {
             <Ionicons name={showPrice ? "checkbox" : "square-outline"} size={22} color={colors.brandPrimary} />
           </Pressable>
         </View>
+
+        <View style={styles.card}>
+          <View style={styles.between}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>Contoh label</Text>
+              <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>
+                {previewProduct ? "Perkiraan tampilan 1 label di kertas thermal." : "Pilih produk di bawah untuk melihat preview."}
+              </Text>
+            </View>
+            <Ionicons name="eye-outline" size={20} color={colors.muted} />
+          </View>
+          <View style={{ marginTop: 12, backgroundColor: colors.surfaceTertiary, paddingVertical: 14, borderRadius: 10 }}>
+            {previewProduct ? (
+              <LabelPreview
+                name={previewProduct.name}
+                code={previewProduct.barcode || previewProduct.sku || previewProduct.id.slice(0, 10).toUpperCase()}
+                price={showPrice ? previewProduct.price : undefined}
+                businessName={settings?.business_name ?? ""}
+                paperWidth={paperWidth}
+              />
+            ) : (
+              <View style={{ alignItems: "center", paddingVertical: 10 }}>
+                <Ionicons name="barcode-outline" size={34} color={colors.muted} />
+                <Text style={[styles.muted, { marginTop: 6 }]}>Belum ada produk dipilih</Text>
+              </View>
+            )}
+          </View>
+          {selectedProducts.length > 1 ? (
+            <Text style={[styles.muted, { fontSize: 11, marginTop: 10, textAlign: "center" }]}>
+              + {selectedProducts.length - 1} produk lain akan ikut tercetak dengan format sama
+            </Text>
+          ) : null}
+        </View>
+
         <TextInput testID="bc-search" value={search} onChangeText={setSearch} placeholder="Cari produk" placeholderTextColor={colors.muted} style={styles.search} />
         <View style={{ height: 16 }} />
         {filtered.map((p) => (
