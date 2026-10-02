@@ -11,7 +11,7 @@ export default function Index() {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
         <ActivityIndicator size="large" color={colors.brandPrimary} />
-        <Text style={{ color: colors.muted, marginTop: 12 }} testID="splash-text">Menyiapkan KasirKu Pro…</Text>
+        <Text style={{ color: colors.muted, marginTop: 12 }} testID="splash-text">Menyiapkan JTPOIN POS…</Text>
       </View>
     );
   }

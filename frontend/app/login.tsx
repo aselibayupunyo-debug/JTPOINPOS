@@ -48,7 +48,7 @@ export default function LoginScreen() {
             <View style={[styles.avatar, { width: 76, height: 76, borderRadius: 24, backgroundColor: colors.brandPrimary }]}>
               <Ionicons name="storefront" size={38} color={colors.onBrandPrimary} />
             </View>
-            <Text style={[styles.title, { fontSize: 30, marginTop: 18 }]} testID="app-title">KasirKu Pro</Text>
+            <Text style={[styles.title, { fontSize: 30, marginTop: 18 }]} testID="app-title">JTPOIN POS</Text>
             <Text style={[styles.subtitle, { textAlign: "center" }]}>Pusat kendali penjualan dan bisnis Anda.</Text>
           </View>
           <View style={styles.card}>

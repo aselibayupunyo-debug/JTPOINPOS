@@ -255,7 +255,7 @@ def public_user(user: dict) -> UserPublic:
 # ---------- Routes ----------
 @api_router.get("/")
 async def root():
-    return {"message": "KasirKu Pro API", "status": "ready"}
+    return {"message": "JTPOIN POS API", "status": "ready"}
 
 
 @api_router.get("/health")

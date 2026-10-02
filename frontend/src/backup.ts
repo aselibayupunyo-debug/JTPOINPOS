@@ -8,13 +8,13 @@ export async function exportBackupZip(): Promise<string> {
   const data = await apiRequest<Record<string, unknown>>("/backup");
   const zip = new JSZip();
   zip.file("kasirku_backup.json", JSON.stringify(data, null, 2));
-  zip.file("README.txt", "Backup KasirKu Pro\nFile: kasirku_backup.json\nVersion: 2\nRestore lewat menu Backup & Restore di aplikasi.");
+  zip.file("README.txt", "Backup JTPOIN POS\nFile: kasirku_backup.json\nVersion: 2\nRestore lewat menu Backup & Restore di aplikasi.");
   const base64 = await zip.generateAsync({ type: "base64", compression: "DEFLATE" });
   const timestamp = new Date().toISOString().replace(/[:T.]/g, "-").slice(0, 19);
   const path = `${FileSystem.cacheDirectory}kasirku_backup_${timestamp}.zip`;
   await FileSystem.writeAsStringAsync(path, base64, { encoding: FileSystem.EncodingType.Base64 });
   if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(path, { mimeType: "application/zip", dialogTitle: "Simpan backup KasirKu Pro" });
+    await Sharing.shareAsync(path, { mimeType: "application/zip", dialogTitle: "Simpan backup JTPOIN POS" });
   }
   return path;
 }

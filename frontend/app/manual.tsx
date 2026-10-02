@@ -19,7 +19,7 @@ const SECTIONS: Section[] = [
   {
     id: "mulai",
     icon: "rocket-outline",
-    title: "Memulai KasirKu Pro",
+    title: "Memulai JTPOIN POS",
     short: "Pengaturan awal dalam 5 menit",
     body: [
       { heading: "Langkah pertama", text: "Setelah daftar, lengkapi profil toko di menu Lainnya → Pengaturan toko & struk. Isi nama toko, alamat, nomor WhatsApp, dan upload logo (opsional)." },
@@ -107,7 +107,7 @@ const SECTIONS: Section[] = [
     id: "offline",
     icon: "cloud-offline-outline",
     title: "Mode Offline",
-    short: "KasirKu tetap jalan tanpa internet",
+    short: "JTPOIN POS tetap jalan tanpa internet",
     body: [
       { heading: "Offline-first", text: "Semua data penting (produk, pelanggan, transaksi) di-cache lokal di perangkat Anda. Anda bisa melakukan transaksi tanpa internet." },
       { heading: "Antrian sinkron", text: "Transaksi yang dibuat offline akan masuk antrian lokal (ikon awan di banner atas). Begitu online, data otomatis dikirim ke server." },
@@ -161,7 +161,7 @@ export default function ManualScreen() {
           </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Buku Panduan</Text>
-            <Text style={styles.subtitle}>Pelajari semua fitur KasirKu Pro</Text>
+            <Text style={styles.subtitle}>Pelajari semua fitur JTPOIN POS</Text>
           </View>
         </View>
 
@@ -228,7 +228,7 @@ export default function ManualScreen() {
           </Text>
         </View>
 
-        <Text style={[styles.muted, { textAlign: "center", marginTop: 24 }]}>KasirKu Pro · Panduan versi 1.0</Text>
+        <Text style={[styles.muted, { textAlign: "center", marginTop: 24 }]}>JTPOIN POS · Panduan versi 1.0</Text>
       </ScrollView>
     </View>
   );

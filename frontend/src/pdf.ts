@@ -84,7 +84,7 @@ export function buildInvoiceHtml(tx: TransactionDoc, settings: BusinessSettings)
     ${tx.outstanding ? `<div class="row"><span>Sisa</span><span>${esc(formatRupiah(tx.outstanding))}</span></div>` : ""}
     ${tx.paid_amount - tx.total > 0 ? `<div class="row"><span>Kembalian</span><span>${esc(formatRupiah(tx.paid_amount - tx.total))}</span></div>` : ""}
   </div>
-  <div class="footer">${esc(settings.footer_note || "Terima kasih atas kunjungan Anda.")}<br/>Dicetak oleh KasirKu Pro · ${esc(new Date().toLocaleString("id-ID"))}</div>
+  <div class="footer">${esc(settings.footer_note || "Terima kasih atas kunjungan Anda.")}<br/>Dicetak oleh JTPOIN POS · ${esc(new Date().toLocaleString("id-ID"))}</div>
 </body></html>`;
 }
 
@@ -184,7 +184,7 @@ export function buildReportHtml(section: ReportTable, businessName: string): str
   <div class="subtitle">${esc(section.subtitle ?? "")}</div>
   <table><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table>
   ${summaryHtml ? `<div class="summary">${summaryHtml}</div>` : ""}
-  <div class="footer">Dibuat ${esc(new Date().toLocaleString("id-ID"))} · KasirKu Pro</div>
+  <div class="footer">Dibuat ${esc(new Date().toLocaleString("id-ID"))} · JTPOIN POS</div>
 </body></html>`;
 }
 

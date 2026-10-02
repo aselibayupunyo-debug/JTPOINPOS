@@ -49,7 +49,7 @@ export default function LainnyaScreen() {
     { icon: "person-add-outline", title: "Operator & kewenangan", detail: "Atur akses tim kasir", path: "/operators", ownerOnly: true },
     { icon: "archive-outline", title: "Backup & Restore (ZIP)", detail: "Simpan dan pulihkan seluruh data", path: "/backup", ownerOnly: true },
     { icon: "print-outline", title: "Pengaturan toko & struk", detail: "Logo, printer 58/80mm, WhatsApp", path: "/settings", permission: "settings" },
-    { icon: "book-outline", title: "Buku Panduan Manual", detail: "Cara pakai semua fitur KasirKu Pro", path: "/manual" },
+    { icon: "book-outline", title: "Buku Panduan Manual", detail: "Cara pakai semua fitur JTPOIN POS", path: "/manual" },
     { icon: "person-circle-outline", title: "Profil & Password", detail: "Ubah nama tampilan & password admin", path: "/profile", ownerOnly: true },
   ];
 
@@ -104,7 +104,7 @@ export default function LainnyaScreen() {
           <Pressable testID="backup-button" onPress={async () => {
             try {
               const data = await apiRequest<Record<string, unknown>>("/backup");
-              await Share.share({ title: "Backup KasirKu Pro", message: JSON.stringify(data, null, 2) });
+              await Share.share({ title: "Backup JTPOIN POS", message: JSON.stringify(data, null, 2) });
             } catch (e) { toast.error("Backup gagal", e instanceof Error ? e.message : undefined); }
           }} style={styles.listRow}>
             <View style={styles.settingIcon}><Ionicons name="cloud-download-outline" size={20} color={colors.brandPrimary} /></View>
@@ -164,7 +164,7 @@ export default function LainnyaScreen() {
         <Pressable testID="logout-button" onPress={signOut} style={[styles.dangerButton, { marginTop: 6 }]}>
           <Text style={styles.dangerText}>Keluar dari akun</Text>
         </Pressable>
-        <Text style={[styles.muted, { textAlign: "center", marginTop: 20 }]}>KasirKu Pro · Semua modul tersinkron ke laporan</Text>
+        <Text style={[styles.muted, { textAlign: "center", marginTop: 20 }]}>JTPOIN POS · Semua modul tersinkron ke laporan</Text>
       </ScrollView>
 
       <AdminPasswordModal

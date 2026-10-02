@@ -204,7 +204,7 @@ export default function LaporanScreen() {
   ] : [];
 
   const sendPdf = async () => {
-    const biz = user?.business_name ?? "KasirKu Pro";
+    const biz = user?.business_name ?? "JTPOIN POS";
     if (!report) return;
     try {
       if (tab === "ringkasan") {
@@ -655,7 +655,7 @@ export default function LaporanScreen() {
                       { label: "Total qty", value: String(operatorDetail.rows.reduce((s, r) => s + r.quantity, 0)) },
                       { label: "Total omzet", value: formatRupiah(operatorDetail.rows.reduce((s, r) => s + r.subtotal, 0)) },
                     ],
-                  }, user?.business_name ?? "KasirKu Pro");
+                  }, user?.business_name ?? "JTPOIN POS");
                 }}
                 style={[styles.primaryButton, { marginTop: 10 }]}
               >

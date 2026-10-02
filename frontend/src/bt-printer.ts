@@ -96,7 +96,7 @@ export async function testPrint(printer: PairedPrinter): Promise<void> {
     .align("center")
     .bold(true)
     .size(2)
-    .text("KasirKu Pro\n")
+    .text("JTPOIN POS\n")
     .size(1)
     .bold(false)
     .text("Tes koneksi printer\n")
