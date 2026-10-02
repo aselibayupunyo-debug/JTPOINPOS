@@ -125,10 +125,24 @@ export default function SettingsScreen() {
               </Pressable>
             ))}
           </View>
-          <View style={{ padding: 12, backgroundColor: colors.surfaceTertiary, borderRadius: 12 }}>
-            <Text style={styles.productName}>Printer Bluetooth</Text>
-            <Text style={[styles.muted, { marginTop: 4 }]}>Dukungan ESC/POS 58mm & 80mm, logo, dan multi-printer dapur aktif pada build Android produksi. Deploy aplikasi lewat tombol Publish untuk mengaktifkan.</Text>
-          </View>
+          <Pressable testID="toggle-cashdrawer" onPress={() => setSettings((s) => s ? { ...s, cashdrawer_enabled: !s.cashdrawer_enabled } : s)} style={styles.listRow}>
+            <View style={styles.settingIcon}><Ionicons name="cash-outline" size={20} color={colors.brandPrimary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.productName}>Buka laci kas otomatis</Text>
+              <Text style={styles.muted}>Kirim ESC/POS cash drawer kick saat cetak struk tunai</Text>
+            </View>
+            <View style={[{ width: 44, height: 26, borderRadius: 13, padding: 2, justifyContent: "center" }, { backgroundColor: settings.cashdrawer_enabled ? colors.brandPrimary : colors.surfaceTertiary }]}>
+              <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: colors.surface, alignSelf: settings.cashdrawer_enabled ? "flex-end" : "flex-start" }} />
+            </View>
+          </Pressable>
+          <Pressable testID="go-printer-settings" onPress={() => router.push("/bluetooth-printer")} style={[styles.listRow]}>
+            <View style={styles.settingIcon}><Ionicons name="print-outline" size={20} color={colors.brandPrimary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.productName}>Printer Bluetooth (ESC/POS)</Text>
+              <Text style={styles.muted}>Pair & test printer thermal 58/80mm (butuh build APK)</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+          </Pressable>
         </View>
         <Pressable testID="save-settings" disabled={busy} onPress={save} style={[styles.primaryButton, busy && { opacity: 0.5 }]}>
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Simpan pengaturan</Text>}

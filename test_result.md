@@ -134,6 +134,27 @@ backend:
         comment: "GET /api/reports/export?period=<p>&start=&end= — returns xlsx streaming with 6 sheets: Ringkasan, Per Produk, Per Pelanggan, Per Operator, Detail Barang, Detail Transaksi. Uses pandas + xlsxwriter."
 
 frontend:
+  - task: "Bluetooth Thermal Printer (ESC/POS) - real implementation"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/bt-printer.ts, /app/frontend/app/bluetooth-printer.tsx, /app/frontend/app/receipt.tsx, /app/frontend/app/settings.tsx, /app/frontend/app/(tabs)/lainnya.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Replaced placeholder-only Bluetooth printer UI with real ESC/POS implementation using react-native-thermal-printer-driver@0.1.1 (TurboModule, New Architecture).
+          Added:
+            - /app/frontend/src/bt-printer.ts: scanPrinters/connect/testPrint/printReceipt/openCashDrawerOnly helpers with lazy dynamic import so web/Expo Go doesn't crash.
+            - /app/frontend/app/bluetooth-printer.tsx: new screen to scan, pair, test, and persist printer (SecureStore per-device).
+            - /app/frontend/app/receipt.tsx: real "Cetak struk sekarang" button that calls printReceipt with 58/80mm paper width, cash drawer toggle, and proper error handling.
+            - /app/frontend/app/settings.tsx: added "Buka laci kas otomatis" toggle + link to Printer Bluetooth screen.
+            - /app/frontend/app/(tabs)/lainnya.tsx: menu "Printer Bluetooth" now navigates to new screen.
+            - app.json: added react-native-thermal-printer-driver config plugin + Android permissions (BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION). iOS BT usage description already present.
+            - backend /integrations/status now reports bluetooth_printing.configured = true with instruction note.
+          NOTE: This feature CANNOT be validated via Expo Go or web preview — it requires an APK/IPA build. On web/Expo Go, UI shows clear "butuh build Android/iOS native" warning instead of crashing.
   - task: "Diskon per-item di kasir"
     implemented: true
     working: "NA"

@@ -19,8 +19,12 @@
     "android": {
       "permissions": [
         "CAMERA",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
         "BLUETOOTH_SCAN",
-        "BLUETOOTH_CONNECT"
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
@@ -53,7 +57,8 @@
       "expo-web-browser",
       "expo-status-bar",
       "expo-sqlite",
-      "expo-sharing"
+      "expo-sharing",
+      "react-native-thermal-printer-driver"
     ],
     "experiments": {
       "typedRoutes": true

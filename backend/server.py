@@ -933,7 +933,7 @@ async def integrations_status(user: dict = Depends(current_user)):
     return {
         "qris": {"configured": os.getenv("QRIS_MODE", "disabled") == "enabled", "label": "QRIS"},
         "whatsapp": {"configured": bool(os.getenv("META_ACCESS_TOKEN")), "label": "WhatsApp Cloud API"},
-        "bluetooth_printing": {"configured": False, "label": "Printer Bluetooth / ESC-POS", "note": "Aktif pada build Android produksi"},
+        "bluetooth_printing": {"configured": True, "label": "Printer Bluetooth / ESC-POS", "note": "Scan & pair printer di menu Lainnya → Printer Bluetooth (butuh APK Android)"},
     }
 
 

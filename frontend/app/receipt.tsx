@@ -8,6 +8,7 @@ import ViewShot, { captureRef } from "react-native-view-shot";
 
 import { apiRequest, BusinessSettings, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
+import { getPairedPrinter, isPrinterAvailable, type PairedPrinter, printReceipt } from "@/src/bt-printer";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -19,6 +20,9 @@ export default function ReceiptScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [tx, setTx] = useState<TransactionDoc | null>(null);
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
+  const [printer, setPrinter] = useState<PairedPrinter | null>(null);
+  const [printerAvailable, setPrinterAvailable] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const shotRef = useRef<ViewShot>(null);
 
   useEffect(() => {
@@ -26,6 +30,10 @@ export default function ReceiptScreen() {
     Promise.all([apiRequest<TransactionDoc>(`/transactions/${id}`), apiRequest<BusinessSettings>("/settings")])
       .then(([t, s]) => { setTx(t); setSettings(s); })
       .catch((e) => toast.error("Gagal memuat struk", e instanceof Error ? e.message : undefined));
+    (async () => {
+      setPrinterAvailable(await isPrinterAvailable());
+      setPrinter(await getPairedPrinter());
+    })();
   }, [id, toast]);
 
   if (!tx || !settings) {
@@ -178,7 +186,55 @@ export default function ReceiptScreen() {
               <Ionicons name="print-outline" size={22} color={colors.brandPrimary} />
               <Text style={[styles.productName, { marginLeft: 10 }]}>Cetak thermal {settings.receipt_width}</Text>
             </View>
-            <Text style={[styles.muted, { marginTop: 6 }]}>Cetak langsung ke printer Bluetooth (ESC/POS) & multi-printer dapur aktif pada build Android produksi. Setelah publish, tombol cetak akan muncul di sini.</Text>
+            {!printerAvailable ? (
+              <Text style={[styles.muted, { marginTop: 6, lineHeight: 20 }]}>
+                Printer thermal butuh APK/IPA build (bukan Expo Go / web). Tekan tombol <Text style={{ fontWeight: "700" }}>Publish</Text> di aplikasi untuk deploy dan generate APK Android.
+              </Text>
+            ) : !printer ? (
+              <>
+                <Text style={[styles.muted, { marginTop: 6, lineHeight: 20 }]}>
+                  Belum ada printer terhubung. Buka menu Printer Bluetooth untuk scan & pair printer thermal.
+                </Text>
+                <Pressable
+                  testID="go-pair-printer"
+                  onPress={() => router.push("/bluetooth-printer")}
+                  style={[styles.primaryButton, { marginTop: 12 }]}
+                >
+                  <Text style={styles.primaryButtonText}>Pasang printer Bluetooth</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.muted, { marginTop: 6, lineHeight: 20 }]}>
+                  Terhubung ke <Text style={{ fontWeight: "700" }}>{printer.name}</Text>. Tekan tombol cetak di bawah.
+                </Text>
+                <Pressable
+                  testID="print-thermal"
+                  disabled={printing}
+                  onPress={async () => {
+                    setPrinting(true);
+                    try {
+                      await printReceipt(tx, settings, { openCashDrawer: settings.cashdrawer_enabled });
+                      toast.success("Struk tercetak", `${printer.name} · ${settings.receipt_width}`);
+                    } catch (e) {
+                      toast.error("Gagal cetak", e instanceof Error ? e.message : undefined);
+                    } finally {
+                      setPrinting(false);
+                    }
+                  }}
+                  style={[styles.primaryButton, { marginTop: 12 }, printing && { opacity: 0.5 }]}
+                >
+                  {printing ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Cetak struk sekarang</Text>}
+                </Pressable>
+                <Pressable
+                  testID="change-printer"
+                  onPress={() => router.push("/bluetooth-printer")}
+                  style={[styles.outlineButton, { marginTop: 10 }]}
+                >
+                  <Text style={styles.outlineText}>Ganti / atur printer</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         </View>
       </ScrollView>

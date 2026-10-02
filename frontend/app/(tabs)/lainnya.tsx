@@ -114,13 +114,14 @@ export default function LainnyaScreen() {
             </View>
             <Ionicons name="share-outline" size={19} color={colors.muted} />
           </Pressable>
-          <View style={styles.listRow}>
-            <View style={styles.settingIcon}><Ionicons name="hardware-chip-outline" size={20} color={colors.brandPrimary} /></View>
+          <Pressable testID="menu-bluetooth-printer" onPress={() => router.push("/bluetooth-printer")} style={styles.listRow}>
+            <View style={styles.settingIcon}><Ionicons name="print-outline" size={20} color={colors.brandPrimary} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.productName}>Printer Bluetooth {integrations?.bluetooth_printing.configured ? "" : "(Build Android)"}</Text>
-              <Text style={styles.muted}>{integrations?.bluetooth_printing.note ?? "Cetak langsung aktif pada build produksi"}</Text>
+              <Text style={styles.muted}>Pair thermal 58/80mm, cetak uji, atur laci kas</Text>
             </View>
-          </View>
+            <Ionicons name="chevron-forward" size={19} color={colors.muted} />
+          </Pressable>
         </View>
 
         {user?.role === "owner" ? (

@@ -100,7 +100,7 @@ const SECTIONS: Section[] = [
       { heading: "Kirim ulang struk", text: "Lainnya → Riwayat transaksi → ketuk transaksi → tombol Cetak / Bagikan / Kirim WA." },
       { heading: "Invoice PDF A5", text: "Dari Riwayat / Laporan Detail Transaksi, tekan Bagikan PDF untuk invoice format A5 (bisa dicetak atau dikirim via email/WA)." },
       { heading: "Receipt gambar JPEG", text: "Alternatif selain PDF, struk bisa dibagikan sebagai gambar JPEG dari layar Riwayat." },
-      { heading: "Printer Bluetooth", text: "⚠️ Fitur Bluetooth thermal printing memerlukan build Android native (bukan Expo Go). Setelah publish & download APK, pair printer di menu Pengaturan toko & struk." },
+      { heading: "Printer Bluetooth", text: "Fitur ESC/POS 58mm/80mm sekarang aktif! Buka Lainnya → Printer Bluetooth → Scan → pilih printer → Cetak uji. Setelah tersimpan, tombol 'Cetak thermal' muncul otomatis di layar struk & riwayat.\n\n⚠️ Hanya berjalan di APK Android native (tidak di Expo Go/web). Jika pakai Expo Go, akan muncul peringatan 'butuh build'." },
     ],
   },
   {
@@ -140,7 +140,7 @@ const SECTIONS: Section[] = [
       { heading: "Kenapa stok minus?", text: "Biasanya karena offline sync membentur konflik. Buka Pengaturan → Antrian sinkron → resolve." },
       { heading: "Lupa password owner?", text: "Dari layar login, tekan 'Reset password'. Verifikasi email yang terdaftar." },
       { heading: "Cara ganti logo struk?", text: "Lainnya → Pengaturan toko & struk → upload Logo. Rekomendasi 300×300px PNG transparan." },
-      { heading: "Printer thermal tidak terdeteksi?", text: "Pastikan Anda pakai build Android (bukan Expo Go). Pair printer di sistem Android dulu, lalu buka Pengaturan → pilih printer." },
+      { heading: "Printer thermal tidak terdeteksi?", text: "1) Pastikan pakai APK Android (bukan Expo Go). 2) Nyalakan Bluetooth HP + izin lokasi. 3) Pair printer dulu di Pengaturan Android (PIN umum: 0000 / 1234). 4) Buka Lainnya → Printer Bluetooth → Scan. 5) Pilih printer dari list → Cetak uji." },
       { heading: "Share receipt gagal?", text: "Pastikan WhatsApp sudah terinstall. Format receipt: pilih PDF atau JPEG di menu riwayat." },
     ],
   },

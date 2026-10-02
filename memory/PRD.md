@@ -58,3 +58,12 @@ Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to 
 31. **Buku Panduan Manual (in-app help)**: `/manual` route — 9 bagian collapsible: Mulai, Kasir, Stok, Laporan, Arus Kas, Struk, Offline, Operator, FAQ. Linked dari menu Lainnya.
 
 Backend testing: 191/191 PASS (168 regression + 23 new custom range/export tests).
+
+## Session 2026-10 (Iter 11) — Bluetooth Printer Fix
+32. **Bluetooth Thermal Printer ESC/POS (REAL)**: Mengganti placeholder "butuh build" dengan implementasi nyata menggunakan `react-native-thermal-printer-driver@0.1.1` (TurboModule, New Architecture). Mendukung Bluetooth Classic + BLE + TCP, 58mm & 80mm paper, QR, barcode, image dithering, cash drawer kick.
+    - Utility `/app/frontend/src/bt-printer.ts` dengan lazy dynamic import — web/Expo Go tidak crash, hanya menampilkan pesan "butuh build APK".
+    - Screen `/app/frontend/app/bluetooth-printer.tsx` untuk scan, pair, test cetak, lepas printer. Pilihan tersimpan di SecureStore (per-device).
+    - Tombol **"Cetak struk sekarang"** di `/receipt` memanggil `printReceipt(tx, settings)` dengan ESC/POS text builder lengkap (header, items, totals, footer, cash drawer).
+    - Toggle **"Buka laci kas otomatis"** di Pengaturan toko (ESC/POS cash drawer kick).
+    - Permission Android: BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION.
+    - **PENTING**: User HARUS Publish & generate APK Android baru untuk mengaktifkan fitur ini (TurboModule tidak jalan di Expo Go).
