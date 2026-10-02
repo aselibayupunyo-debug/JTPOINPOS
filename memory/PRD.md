@@ -85,3 +85,20 @@ Backend testing: 191/191 PASS (168 regression + 23 new custom range/export tests
 38. **Permission handling Android**: `PermissionsAndroid.requestMultiple` auto-detect SDK level (31+ pakai BLUETOOTH_SCAN/CONNECT, lama pakai ACCESS_FINE_LOCATION). NEVER_ASK_AGAIN → arahkan user ke app settings.
 
 **PENTING UNTUK USER**: APK yang sekarang di HP masih berisi library lama yang crash. Harus **Publish ulang** dari aplikasi lalu **generate APK baru** untuk pakai library yang stabil.
+
+## Session 2026-10 (Iter 13) — Crash Fix + Retur Password + Decimal Qty
+39. **🔴 Root cause crash Laporan + Cetak Barcode**: `/app/frontend/src/pdf.ts` import `bwip-js` di module scope — `bwip-js` indirectly load `react-zlib-js` yang crash native di beberapa HP Android. Semua screen yang import pdf.ts (Laporan, Cetak Barcode, Riwayat, Debts) ikut crash. **FIX**: Pindah `require("bwip-js")` ke dalam fungsi `barcodeSvg()` dengan try/catch — hanya di-load saat barcode benar2 digenerate.
+40. **Quantity desimal di kasir**: Backend `TransactionItem.quantity` ganti dari `int` ke `float`. Frontend: cart line qty bisa diketuk → TextInput decimal-pad, auto-handle koma/titik, hingga 3 digit desimal (ex: 0.5 kg, 2.25 liter). Format display pakai `.toLocaleString("id-ID")`.
+41. **Preview button → direct cetak thermal**: Tombol "Preview / Cetak Struk" di checkout sekarang: (a) jika printer thermal terpasang → langsung cetak via `printReceipt()`; (b) jika tidak → fallback ke preview PDF via `expo-print`. Membangun fake TransactionDoc dari cart items + totals.
+42. **Retur dengan password admin**: Backend `TransactionInput.admin_password` wajib untuk `sale_return`/`purchase_return`. Verifikasi via `bcrypt.checkpw` terhadap user dengan role owner/admin di business yang sama. Password salah → 401.
+43. **Cegah double retur**: Backend menyimpan `returned`, `returned_at`, `return_transaction_id` di transaksi asli saat retur dibuat. Retur kedua kalinya → 400 "sudah pernah diretur". Frontend `returns.tsx` filter `!tx.returned && tx.status !== "cancelled"` dari list.
+44. **Modal password konfirmasi retur**: Frontend `returns.tsx` buka modal password sebelum call API. Peringatan: "Transaksi tidak dapat diretur lebih dari satu kali".
+
+Backend testing: **219/219 PASS** (191 regression + 28 new iter-11 tests mencakup decimal qty, retur password workflow, returned flag).
+
+**TODO (sesi berikutnya)**:
+- Logo on struk thermal (ESC/POS raster image command)
+- Logo flexible aspect ratio (persegi / persegi panjang)
+- Price level toggle (checkbox pakai level harga atau tidak)
+- Multi-printer dapur routing
+- **Full offline migration**: Rewrite auth + semua endpoint API ke SQLite murni (butuh dedicated session, major arch change).

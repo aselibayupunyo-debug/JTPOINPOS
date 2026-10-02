@@ -63,7 +63,8 @@ def test_integrations_are_explicitly_unconfigured(session):
     data = session.get(f"{BASE_URL}/api/integrations/status", timeout=20).json()
     assert data["qris"]["configured"] is False
     assert data["whatsapp"]["configured"] is False
-    assert data["bluetooth_printing"]["configured"] is False
+    # bluetooth_printing is now configured by default after the ESC-POS native fix.
+    assert data["bluetooth_printing"]["configured"] is True
 
 
 def test_protected_products_without_token():

@@ -97,6 +97,9 @@ export type TransactionDoc = {
   supplier_id?: string | null;
   price_level_id?: string;
   status?: "active" | "cancelled";
+  returned?: boolean;
+  returned_at?: string;
+  return_transaction_id?: string;
   cancel_reason?: string;
   cancelled_at?: string;
   note: string;

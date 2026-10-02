@@ -79,7 +79,7 @@ class ProductInput(BaseModel):
 class TransactionItem(BaseModel):
     product_id: str
     name: str
-    quantity: int = Field(gt=0)
+    quantity: float = Field(gt=0)
     price: int = Field(ge=0)
     cost: int = Field(default=0, ge=0)
     discount: int = Field(default=0, ge=0)
@@ -106,6 +106,8 @@ class TransactionInput(BaseModel):
     shift_id: Optional[str] = None
     promo_ids: List[str] = Field(default_factory=list)
     note: str = ""
+    original_transaction_id: Optional[str] = None  # untuk sale_return / purchase_return
+    admin_password: Optional[str] = None  # wajib untuk sale_return / purchase_return
 
 
 class ParkedTransactionInput(BaseModel):
@@ -349,6 +351,42 @@ async def delete_product(product_id: str, user: dict = Depends(current_user)):
 async def create_transaction(payload: TransactionInput, user: dict = Depends(current_user)):
     permission_map = {"sale": "sales", "purchase": "purchases", "sale_return": "returns", "purchase_return": "returns"}
     ensure_permission(user, permission_map[payload.transaction_type])
+    # ---- Validasi retur: wajib password admin & cegah double retur ----
+    if payload.transaction_type in {"sale_return", "purchase_return"}:
+        if not payload.admin_password:
+            raise HTTPException(status_code=400, detail="Retur transaksi butuh password")
+        # Verify against owner/admin password within the same business
+        candidates = await db.users.find(
+            {"business_id": user["business_id"], "role": {"$in": ["owner", "admin"]}},
+            {"_id": 0, "password_hash": 1},
+        ).to_list(10)
+        # Fallback to the current user's hash if no owner/admin role flagged
+        if not candidates:
+            me = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 1})
+            if me:
+                candidates = [me]
+        verified = False
+        for cand in candidates:
+            hashed = (cand or {}).get("password_hash")
+            if hashed and bcrypt.checkpw(payload.admin_password.encode(), hashed.encode()):
+                verified = True
+                break
+        if not verified:
+            raise HTTPException(status_code=401, detail="Password admin salah")
+        if payload.original_transaction_id:
+            original = await db.transactions.find_one(
+                {"id": payload.original_transaction_id, "business_id": user["business_id"]},
+                {"_id": 0, "transaction_type": 1, "returned": 1, "status": 1},
+            )
+            if not original:
+                raise HTTPException(status_code=404, detail="Transaksi asli tidak ditemukan")
+            if original.get("returned"):
+                raise HTTPException(status_code=400, detail="Transaksi ini sudah pernah diretur")
+            if original.get("status") == "cancelled":
+                raise HTTPException(status_code=400, detail="Transaksi sudah dibatalkan — tidak bisa diretur")
+            expected_source = "sale" if payload.transaction_type == "sale_return" else "purchase"
+            if original.get("transaction_type") != expected_source:
+                raise HTTPException(status_code=400, detail="Jenis transaksi tidak cocok untuk retur ini")
     product_ids = [item.product_id for item in payload.items]
     found = await db.products.find({"id": {"$in": product_ids}, "business_id": user["business_id"]}, {"_id": 0}).to_list(5000)
     by_id = {item["id"]: item for item in found}
@@ -422,6 +460,12 @@ async def create_transaction(payload: TransactionInput, user: dict = Depends(cur
         "note": payload.note, "created_at": now_iso(), "created_by": user["id"], "created_by_name": user["name"],
     }
     await db.transactions.insert_one(transaction)
+    # Mark original tx as returned so UI can hide retur button
+    if payload.transaction_type in {"sale_return", "purchase_return"} and payload.original_transaction_id:
+        await db.transactions.update_one(
+            {"id": payload.original_transaction_id, "business_id": user["business_id"]},
+            {"$set": {"returned": True, "returned_at": now_iso(), "return_transaction_id": transaction["id"]}},
+        )
     return {k: v for k, v in transaction.items() if k not in {"business_id", "_id"}}
 
 

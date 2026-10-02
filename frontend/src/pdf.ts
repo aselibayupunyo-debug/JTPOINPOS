@@ -1,7 +1,6 @@
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import * as Linking from "expo-linking";
-import bwipjs from "bwip-js";
 
 import { BusinessSettings, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
 
@@ -118,6 +117,11 @@ export async function shareInvoicePdf(tx: TransactionDoc, settings: BusinessSett
 
 export function barcodeSvg(code: string, options: { height?: number; scale?: number; includetext?: boolean } = {}): string {
   try {
+    // Lazy require so pulling in `bwip-js` happens only on screens that render barcodes.
+    // On older Android devices, `bwip-js` indirectly loads `react-zlib-js` which can crash
+    // at module eval time; keeping it out of the top-level import makes other screens safe.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const bwipjs = require("bwip-js") as typeof import("bwip-js").default;
     return bwipjs.toSVG({
       bcid: "code128",
       text: code,

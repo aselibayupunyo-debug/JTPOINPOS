@@ -300,6 +300,8 @@ class TestTransactions:
             json={
                 "transaction_type": "sale_return", "payment_method": "cash", "paid_amount": 0,
                 "items": [{"product_id": prod["id"], "name": prod["name"], "quantity": 1, "price": 15000, "cost": 6000}],
+                # iter-11: sale_return now requires admin_password (owner's password)
+                "admin_password": "TestPass123!",
             },
             timeout=TIMEOUT,
         )
@@ -505,9 +507,11 @@ class TestIntegrations:
         assert "qris" in body and "configured" in body["qris"]
         assert "whatsapp" in body and "configured" in body["whatsapp"]
         assert "bluetooth_printing" in body and "configured" in body["bluetooth_printing"]
-        # Expected default: all three unconfigured in preview
+        # Expected default in preview: qris + whatsapp unconfigured. bluetooth_printing is
+        # now configured by default (ESC-POS pairing available in APK) since the native-
+        # crash + bluetooth fix.
         assert body["qris"]["configured"] is False
-        assert body["bluetooth_printing"]["configured"] is False
+        assert body["bluetooth_printing"]["configured"] is True
 
 
 class TestDebts:

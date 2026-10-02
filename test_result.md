@@ -174,7 +174,7 @@ frontend:
     implemented: true
     working: "NA"
     file: "/app/frontend/app/(tabs)/laporan.tsx"
-    stuck_count: 1
+    stuck_count: 2
     priority: "high"
     needs_retesting: true
     status_history:
@@ -186,15 +186,19 @@ frontend:
         comment: "Bug: Laporan tab crashes app immediately on APK Android build. App exits when user taps Laporan."
       - working: "NA"
         agent: "main"
+        comment: "Hardened Laporan tab with defensive guards (Promise.all → safely wrapper, date math try/catch, Array.isArray, null-coalesce). Changed /transactions limit 500 → 300 + slice(0,200)."
+      - working: false
+        agent: "user"
+        comment: "APK still crashes 'JTPOIN POS terus berhenti' when opening Laporan."
+      - working: "NA"
+        agent: "main"
         comment: |
-          Hardened Laporan tab to prevent native crash:
-            - Each of 6 API endpoints now uses `safely<T>()` wrapper so one failure doesn't blank whole screen (previous Promise.all would reject all).
-            - Removed double-fetch race: useFocusEffect now handles both initial-load and period-change (was duplicated with useEffect).
-            - Removed `toast` from useCallback deps that could trigger infinite re-render if ToastProvider state changed.
-            - Guarded all date math with try/catch + /^\\d{4}-\\d{2}-\\d{2}$/ validation before new Date(…).toISOString().
-            - Array.isArray guard on every state setter so malformed server response can't crash the renderer.
-            - Reduced /transactions limit from 500 → 300 and cap display slice to 200 to avoid Hermes OOM on low-RAM Android phones.
-            - Defensive null-coalesce on every render field (t.items?.length, c.customer_name ?? "Umum", r.name ?? "-", etc.) so a single malformed doc can't throw a TypeError that bubbles past the ErrorBoundary.
+          Root cause identified: /app/frontend/src/pdf.ts was importing `bwip-js` at MODULE SCOPE. bwip-js indirectly loads react-zlib-js which crashes on some Android devices at module eval time. Since laporan.tsx imports pdf.ts (for shareReportPdf/shareInvoicePdf), opening Laporan triggered the native crash via import chain.
+          Fix: Moved `bwip-js` require() inside `barcodeSvg()` function body wrapped in try/catch. Now:
+            - Laporan, Riwayat, Debts, etc. import pdf.ts without triggering bwip-js load
+            - Only barcode-print.tsx (which actually calls barcodeSvg) triggers the require
+            - If require() itself crashes, try/catch returns fallback SVG text
+          Also moves Cetak Barcode screen off the crash path (bwip-js only loaded when user taps "Cetak").
   - task: "Buku Panduan Manual"
     implemented: true
     working: "NA"

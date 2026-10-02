@@ -1,0 +1,62 @@
+{
+  "summary": "Iter-11 backend regression + feature verification for JTPOIN POS retur password + decimal quantity. Full regression PASS: 219/219 (191 carry-over + 28 NEW iter-11). Decimal quantity on sale works end-to-end: POST /api/transactions with quantity=0.5 and 2.5 is accepted (TransactionItem.quantity is now float), subtotal/total correctly computed (20000*0.5=10000; 20000*2.5=50000). Retur admin_password enforcement is correct: missing admin_password -> 400 'Retur transaksi butuh password'; wrong password -> 401 'Password admin salah'; correct password + original_transaction_id -> 200 and the original transaction is persisted with returned=true, returned_at (ISO), and return_transaction_id (uuid of the retur doc). Double-retur on the same original_transaction_id is rejected with 400 'Transaksi ini sudah pernah diretur'. Unknown original_transaction_id -> 404 'Transaksi asli tidak ditemukan'. GET /api/transactions/{id} and GET /api/transactions?kind=sale both expose the new fields (returned, returned_at, return_transaction_id). Report endpoints regression: /reports/summary|products|customers|operators|sales-items all PASS for period=daily|monthly|yearly|custom with no mongo _id leaks. Only two carry-over failures surfaced during full regression and both were stale test expectations rather than product bugs — fixed by updating the tests to the new contract: (a) test_sale_return_restores_stock in test_backend_full.py didn't send admin_password (now sent as owner's register password); (b) test_integrations_status and test_integrations_are_explicitly_unconfigured still asserted bluetooth_printing.configured=False even though the recent 'Native Crash + Direct Bluetooth Printing' commit intentionally flipped it to True — tests updated. No backend code changes were made.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/transactions (sale_return)",
+        "issue": "admin_password is verified against ANY owner/admin user in the business (not strictly against the acting operator or a dedicated retur-admin). This is acceptable per spec ('verified against owner/admin role users in same business') but means a cashier with 'returns' permission can retur if they happen to know ANY owner/admin password. Non-blocking — matches spec."
+      },
+      {
+        "endpoint": "POST /api/transactions (sale_return)",
+        "issue": "Stock restore on retur still uses int(round(quantity * unit_factor)) in _stock_delta — if a decimal sale (quantity=0.5) is retur'd, the stock delta rounds to 0 or 1 depending on unit_factor. Minor rounding mismatch between fractional sale and integer stock. Not tested in isolation but visible in code (server.py:405-408). Non-blocking."
+      },
+      {
+        "endpoint": "(carried) /app/backend/pytest.ini",
+        "issue": "Still ships -n 2 --dist loadscope; full regression must use `-o addopts=` to avoid cross-worker races on module-scoped seeded state. Not an endpoint bug."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter11_retur_decimal_qty.py",
+    "/app/test_reports/pytest/iteration11_results.xml",
+    "/app/test_reports/pytest/iteration11_full.xml"
+  ],
+  "action_items": [
+    "(Optional, minor) In create_transaction, consider using math.ceil or storing decimal stock instead of int(round(...)) when quantity is fractional so sale+retur stock math stays symmetric (server.py:405-408).",
+    "(Optional) Consider also supporting 'cancelled' detection on retur more explicitly in GET responses (currently sale_return on a cancelled original returns 400 'Transaksi sudah dibatalkan' — good; just mentioning the UI should also handle this message).",
+    "(Carried) Split server.py (>1690 lines) into routers for maintainability.",
+    "(Carried) Remove or override `-n 2 --dist loadscope` default in pytest.ini — future agents must remember `-o addopts=` for full regression."
+  ],
+  "critical_code_review_comments": [
+    "server.py:79-90 TransactionItem.quantity is now `float = Field(gt=0)` — correct and backwards compatible with integer payloads. All downstream math (price*quantity, discount, tax, shipping) works unchanged.",
+    "server.py:351-389 create_transaction retur-validation: ordering is correct (empty password check -> candidate lookup over owner/admin role -> bcrypt verify -> original_transaction_id existence -> returned flag -> cancelled status -> transaction_type match). Returns the right status codes (400 missing, 401 wrong, 404 not found, 400 double/cancelled/mismatch). Password check uses bcrypt.checkpw against stored password_hash — matches /auth/register and /profile logic. Good.",
+    "server.py:359-367 candidate lookup gracefully falls back to the acting user's own hash when no owner/admin exists in the business — defensive for edge cases.",
+    "server.py:463-468 Marking the original as returned happens AFTER the retur transaction is inserted and only when original_transaction_id is present. `returned_at` uses now_iso() (same format as created_at) and `return_transaction_id` references the new retur doc id. Correct order.",
+    "server.py:472-492 GET /transactions and GET /transactions/{id} both use projection {_id:0, business_id:0} and return the whole doc, so the newly-added `returned/returned_at/return_transaction_id` fields are naturally exposed without additional code. Verified end-to-end.",
+    "server.py:395 total computation `sum(item.price * item.quantity for item in payload.items)` works correctly with float quantity; int cast happens later via int(round(...)) for tax/discount so float propagates through subtotal cleanly.",
+    "server.py:405-408 _stock_delta uses int(round(item.quantity * factor)) — fine for integer qty, but with fractional qty and factor=1 you lose <0.5 fractions. Minor-only (noted above).",
+    "server.py:385-389 Cancelled/wrong-type guards use the correct error messages ('Transaksi sudah dibatalkan' / 'Jenis transaksi tidak cocok untuk retur ini'). Good.",
+    "No MongoDB _id leaks in any transaction/report payload (all reads use {_id:0, business_id:0})."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter11_retur_decimal_qty.py (NEW — 28 tests: 2 decimal-qty + 5 admin_password/retur-flag + 1 list-returned-flag + 15 built-in-period regression + 5 custom-period regression)",
+    "/app/backend/tests/test_backend_full.py (updated test_sale_return_restores_stock to send admin_password='TestPass123!' matching the new API contract; updated test_integrations_status bluetooth_printing expectation to True after the recent native-fix commit)",
+    "/app/backend/tests/test_public_api.py (updated test_integrations_are_explicitly_unconfigured bluetooth_printing expectation to True)"
+  ],
+  "success_rate": {
+    "backend": "100% (28/28 iter-11 isolated, 219/219 full regression serial run with `-o addopts=`)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Fresh TEST_Iter11 owner (iter11_<hex>/password123) via POST /api/auth/register, 1 TEST_Iter11 Kopi product (price 20000, cost 10000, stock 200). Multiple sales (qty 0.5, 2.5, 1, 2, 3, 1) and multiple sale_returns issued inside the module-scoped business. All data isolated by business_id, no production impact.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for full 219-test regression (~51s). The `-o addopts=` flag REMAINS REQUIRED (pytest.ini pins -n 2 --dist loadscope which is unsafe for iter-5 state). Iter-11 smoke suite is test_iter11_retur_decimal_qty.py — covers decimal quantity, retur admin_password flow (400/401/200), returned-flag persistence on the original tx, and double-retur rejection. If future iterations change the retur password verification source (e.g. require a dedicated 'retur-admin' password instead of owner/admin role), update TestSaleReturnAdminPassword.test_return_with_correct_admin_password_succeeds_and_marks_original. Two carry-over tests (sale_return_restores_stock, bluetooth_printing.configured) were updated this iteration — if the backend reverts the bluetooth_printing default back to False, revert the two integration-status assertions.",
+  "rca_of_issue": "N/A — feature verification iteration. All iter-11 additions behave to spec: TransactionItem.quantity is a Field(gt=0) float, retur validation correctly stacks (missing->400 / wrong->401 / unknown-original->404 / double->400 / wrong-type->400 / cancelled->400), and the original transaction is atomically patched with {returned:true, returned_at, return_transaction_id} AFTER the retur doc is inserted so GET /transactions/{id} and the list endpoint both expose the new fields without any additional projection change. Zero regressions across 191 carry-over tests once the two stale test expectations were updated to match the new contracts."
+}

@@ -192,7 +192,8 @@ export default function KasirScreen() {
     }
     addLineToCart(product, product.base_unit ?? "Pcs", 1, priceAtLevel);
   };
-  const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: i.quantity + delta } : i).filter((i) => i.quantity > 0));
+  const changeQty = (lineId: string, delta: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: Math.max(0, Math.round((i.quantity + delta) * 1000) / 1000) } : i).filter((i) => i.quantity > 0));
+  const setQty = (lineId: string, next: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, quantity: Math.max(0, Math.round(next * 1000) / 1000) } : i).filter((i) => i.quantity > 0));
   const changePrice = (lineId: string, nextPrice: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, price: nextPrice } : i));
   const changeDiscount = (lineId: string, nextDisc: number) => setCart((c) => c.map((i) => i.line_id === lineId ? { ...i, manual_discount: Math.max(0, nextDisc) } : i));
   const removeFromCart = (lineId: string) => setCart((c) => c.filter((i) => i.line_id !== lineId));
@@ -501,6 +502,7 @@ export default function KasirScreen() {
         paymentMethods={paymentMethods}
         settings={settings}
         changeQty={changeQty}
+        setQty={setQty}
         changePrice={changePrice}
         changeDiscount={changeDiscount}
         removeFromCart={removeFromCart}
@@ -548,7 +550,7 @@ export default function KasirScreen() {
 }
 
 function CheckoutSheet({
-  visible, onClose, cart, customers, customer, setCustomer, paymentMethods, settings, changeQty, changePrice, changeDiscount, removeFromCart, onCancel, onPark, onComplete,
+  visible, onClose, cart, customers, customer, setCustomer, paymentMethods, settings, changeQty, setQty, changePrice, changeDiscount, removeFromCart, onCancel, onPark, onComplete,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -559,6 +561,7 @@ function CheckoutSheet({
   paymentMethods: PaymentMethodDoc[];
   settings: BusinessSettings | null;
   changeQty: (id: string, delta: number) => void;
+  setQty: (id: string, next: number) => void;
   changePrice: (id: string, next: number) => void;
   changeDiscount: (id: string, next: number) => void;
   removeFromCart: (id: string) => void;
@@ -580,7 +583,15 @@ function CheckoutSheet({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [qtyEditing, setQtyEditing] = useState<string | null>(null);
   const [discEditor, setDiscEditor] = useState<null | { lineId: string; item: CartItem }>(null);
+
+  const fmtQty = (q: number): string => {
+    const n = Number(q);
+    if (!Number.isFinite(n)) return "0";
+    // Show up to 3 decimals, strip trailing zeros
+    return n.toLocaleString("id-ID", { maximumFractionDigits: 3 });
+  };
   const [discType, setDiscType] = useState<"amount" | "percent">("amount");
   const [discValue, setDiscValue] = useState("");
 
@@ -655,7 +666,7 @@ function CheckoutSheet({
                       </View>
                     ) : (
                       <Pressable onPress={() => (settings?.allow_price_edit ?? true) && setEditing(key)}>
-                        <Text style={styles.muted}>{formatRupiah(item.price)} × {item.quantity}{(settings?.allow_price_edit ?? true) ? " · ketuk harga" : ""}</Text>
+                        <Text style={styles.muted}>{formatRupiah(item.price)} × {fmtQty(item.quantity)}{(settings?.allow_price_edit ?? true) ? " · ketuk harga" : ""}</Text>
                       </Pressable>
                     )}
                     <Pressable
@@ -675,7 +686,32 @@ function CheckoutSheet({
                   </View>
                   <View style={styles.row}>
                     <Pressable testID={`qty-minus-${key}`} onPress={() => changeQty(key, -1)} style={styles.iconButton}><Ionicons name="remove" size={18} color={colors.brandPrimary} /></Pressable>
-                    <Text style={{ width: 28, textAlign: "center", color: colors.onSurface, fontWeight: "700" }}>{item.quantity}</Text>
+                    {qtyEditing === key ? (
+                      <TextInput
+                        testID={`qty-input-${key}`}
+                        keyboardType="decimal-pad"
+                        autoFocus
+                        defaultValue={String(item.quantity)}
+                        selectTextOnFocus
+                        onBlur={(e) => {
+                          const raw = e.nativeEvent.text.replace(",", ".").replace(/[^\d.]/g, "");
+                          const num = Number(raw);
+                          if (Number.isFinite(num) && num > 0) setQty(key, num);
+                          setQtyEditing(null);
+                        }}
+                        onSubmitEditing={(e) => {
+                          const raw = e.nativeEvent.text.replace(",", ".").replace(/[^\d.]/g, "");
+                          const num = Number(raw);
+                          if (Number.isFinite(num) && num > 0) setQty(key, num);
+                          setQtyEditing(null);
+                        }}
+                        style={{ minWidth: 48, maxWidth: 72, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary, paddingVertical: 2 }}
+                      />
+                    ) : (
+                      <Pressable testID={`qty-edit-${key}`} onPress={() => setQtyEditing(key)}>
+                        <Text style={{ minWidth: 36, paddingHorizontal: 2, textAlign: "center", color: colors.onSurface, fontWeight: "700" }}>{fmtQty(item.quantity)}</Text>
+                      </Pressable>
+                    )}
                     <Pressable testID={`qty-plus-${key}`} onPress={() => changeQty(key, 1)} style={styles.iconButton}><Ionicons name="add" size={18} color={colors.brandPrimary} /></Pressable>
                     <Pressable testID={`remove-${key}`} onPress={() => removeFromCart(key)} style={{ marginLeft: 6 }}><Ionicons name="trash-outline" size={18} color={colors.error} /></Pressable>
                   </View>
@@ -783,10 +819,61 @@ function CheckoutSheet({
                     return;
                   }
                   if (cart.length === 0) { toast.error("Keranjang kosong"); return; }
+
+                  // 1) Coba cetak langsung ke printer thermal paired (jika tersedia)
+                  try {
+                    const { getPairedPrinter, printReceipt, isPrinterAvailable } = await import("@/src/bt-printer");
+                    const [paired, available] = await Promise.all([getPairedPrinter(), isPrinterAvailable()]);
+                    if (available && paired && settings) {
+                      const nowIso = new Date().toISOString();
+                      const items = cart.map((it) => ({
+                        product_id: it.product_id ?? it.id,
+                        name: it.name,
+                        quantity: it.quantity,
+                        price: it.price,
+                        cost: it.cost ?? 0,
+                        discount: it.discount ?? 0,
+                        unit: it.unit ?? "",
+                        unit_factor: it.unit_factor ?? 1,
+                        product_type: it.product_type ?? "goods",
+                        kitchen_print: !!it.kitchen_print,
+                      }));
+                      const subtotalCalc = items.reduce((s, i) => s + i.price * i.quantity - (i.discount ?? 0), 0);
+                      const fakeTx = {
+                        id: "preview",
+                        invoice_no: `DRAFT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+                        transaction_type: "sale" as const,
+                        payment_method: method?.kind || "cash",
+                        payment_method_label: method?.label || "Tunai",
+                        items,
+                        total: grandTotal,
+                        subtotal: subtotalCalc,
+                        global_discount: globalDisc,
+                        discount_percent: dPct,
+                        tax_percent: tPct,
+                        tax_amount: taxAmt,
+                        shipping: shippingNum,
+                        paid_amount: kind === "cash" ? paidNumber : 0,
+                        outstanding: 0,
+                        customer_name: customerName.trim() || "Umum",
+                        created_at: nowIso,
+                        created_by_name: "",
+                        status: "active" as const,
+                      };
+                      await printReceipt(fakeTx, settings, { openCashDrawer: settings.cashdrawer_enabled });
+                      toast.success("Struk tercetak", `${paired.name} · ${settings.receipt_width}`);
+                      return;
+                    }
+                  } catch (printErr) {
+                    const msg = printErr instanceof Error ? printErr.message : "";
+                    if (msg) toast.info("Printer thermal belum siap", `Jatuh ke preview PDF. ${msg}`);
+                  }
+
+                  // 2) Fallback: preview HTML via expo-print
                   const biz = settings?.business_name || "Toko";
                   const header = (settings?.header_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
                   const footer = (settings?.footer_lines ?? []).slice(0, 4).map((l) => `<div>${l.replace(/</g, "&lt;")}</div>`).join("");
-                  const rows = cart.map((it) => `<tr><td>${it.name}${it.unit ? ` (${it.unit})` : ""}<br/><span style="font-size:9px;color:#555">${it.quantity} × ${formatRupiah(it.price)}</span></td><td style="text-align:right">${formatRupiah(it.price * it.quantity)}</td></tr>`).join("");
+                  const rows = cart.map((it) => `<tr><td>${it.name}${it.unit ? ` (${it.unit})` : ""}<br/><span style="font-size:9px;color:#555">${fmtQty(it.quantity)} × ${formatRupiah(it.price)}</span></td><td style="text-align:right">${formatRupiah(it.price * it.quantity)}</td></tr>`).join("");
                   const html = `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><style>
                     body { font-family: -apple-system, Arial, sans-serif; width: 58mm; padding: 6px; margin: 0; }
                     .center { text-align:center; }
@@ -823,7 +910,7 @@ function CheckoutSheet({
               }}
               style={[styles.outlineButton, { marginTop: 10 }, busy && { opacity: 0.5 }]}
             >
-              <Text style={styles.outlineText}>Preview / Cetak Struk</Text>
+              <Text style={styles.outlineText}>Cetak struk sekarang</Text>
             </Pressable>
             <Pressable
               testID="confirm-pay"
