@@ -2,10 +2,10 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, Product } from "@/src/api";
+import { apiRequest, Category, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -33,6 +33,13 @@ export default function ProductFormScreen() {
   const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!!id);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryPicker, setCategoryPicker] = useState(false);
+  const [newCategoryInput, setNewCategoryInput] = useState("");
+
+  useEffect(() => {
+    apiRequest<Category[]>("/categories").then(setCategories).catch(() => setCategories([]));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -175,7 +182,11 @@ export default function ProductFormScreen() {
         </View>
 
         <Text style={styles.inputLabel}>Kategori</Text>
-        <TextInput value={category} onChangeText={setCategory} style={styles.input} placeholder="Umum / Makanan / Minuman" placeholderTextColor={colors.muted} />
+        <Pressable testID="pick-category" onPress={() => setCategoryPicker(true)} style={[styles.input, { flexDirection: "row", alignItems: "center" }]}>
+          <Text style={{ flex: 1, color: colors.onSurface, fontSize: 15 }}>{category || "Pilih kategori"}</Text>
+          <Ionicons name="chevron-down" size={20} color={colors.muted} />
+        </Pressable>
+        <Text style={[styles.muted, { fontSize: 11, marginTop: -4, marginBottom: 8 }]}>Terhubung otomatis ke menu Kategori Produk ({categories.length} kategori).</Text>
         <Text style={styles.inputLabel}>Barcode / SKU</Text>
         <TextInput value={barcode} onChangeText={setBarcode} style={styles.input} placeholder="Opsional, scan atau ketik manual" placeholderTextColor={colors.muted} />
         <View style={[styles.between, styles.card, { marginTop: 2 }]}>
@@ -196,6 +207,63 @@ export default function ProductFormScreen() {
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>{id ? "Simpan perubahan" : "Simpan produk"}</Text>}
         </Pressable>
       </ScrollView>
+
+      <Modal visible={categoryPicker} transparent animationType="fade" onRequestClose={() => setCategoryPicker(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18, maxHeight: "80%" }}>
+            <View style={styles.between}>
+              <Text style={styles.cardTitle}>Pilih kategori produk</Text>
+              <Pressable onPress={() => setCategoryPicker(false)}><Ionicons name="close" size={22} color={colors.onSurface} /></Pressable>
+            </View>
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>Daftar kategori sinkron dengan menu Kategori Produk. Kelola lewat Lainnya → Kategori produk.</Text>
+            <ScrollView style={{ maxHeight: 300 }}>
+              {categories.length === 0 ? (
+                <Text style={[styles.muted, { padding: 10 }]}>Belum ada kategori. Tambahkan lewat input di bawah atau menu Kategori.</Text>
+              ) : categories.map((c) => (
+                <Pressable
+                  key={c.id}
+                  testID={`cat-opt-${c.id}`}
+                  onPress={() => { setCategory(c.name); setCategoryPicker(false); }}
+                  style={styles.listRow}
+                >
+                  <View style={styles.settingIcon}><Ionicons name={(c.icon as "pricetag-outline") || "pricetag-outline"} size={20} color={colors.brandPrimary} /></View>
+                  <Text style={[styles.productName, { flex: 1 }]}>{c.name}</Text>
+                  {category === c.name ? <Ionicons name="checkmark-circle" size={22} color={colors.brandPrimary} /> : null}
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Text style={[styles.inputLabel, { marginTop: 10 }]}>Atau tambah kategori baru:</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TextInput
+                testID="new-category-input"
+                value={newCategoryInput}
+                onChangeText={setNewCategoryInput}
+                placeholder="Nama kategori baru"
+                placeholderTextColor={colors.muted}
+                style={[styles.input, { flex: 1, marginBottom: 0 }]}
+              />
+              <Pressable
+                testID="add-category-button"
+                onPress={async () => {
+                  const name = newCategoryInput.trim();
+                  if (!name) return;
+                  try {
+                    const created = await apiRequest<Category>("/categories", { method: "POST", body: JSON.stringify({ name, icon: "pricetag-outline" }) });
+                    setCategories((prev) => [...prev, created]);
+                    setCategory(created.name);
+                    setNewCategoryInput("");
+                    setCategoryPicker(false);
+                    toast.success("Kategori ditambahkan", created.name);
+                  } catch (e) { toast.error("Gagal tambah kategori", e instanceof Error ? e.message : undefined); }
+                }}
+                style={[styles.primaryButton, { minWidth: 80, paddingHorizontal: 14 }]}
+              >
+                <Text style={styles.primaryButtonText}>Tambah</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }

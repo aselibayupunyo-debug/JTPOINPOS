@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, formatRupiah, ParkedTransaction } from "@/src/api";
@@ -16,6 +16,7 @@ export default function ParkedScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const [list, setList] = useState<ParkedTransaction[]>([]);
+  const [query, setQuery] = useState("");
   const [confirmCancel, setConfirmCancel] = useState<ParkedTransaction | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -24,6 +25,17 @@ export default function ParkedScreen() {
     catch (e) { toast.error("Gagal memuat", e instanceof Error ? e.message : undefined); }
   }, [toast]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((p) => {
+      const name = (p.customer_name ?? "").toLowerCase();
+      const label = (p.label ?? "").toLowerCase();
+      const itemsText = (p.items ?? []).map((i) => (i.name ?? "").toLowerCase()).join(" ");
+      return name.includes(q) || label.includes(q) || itemsText.includes(q);
+    });
+  }, [list, query]);
 
   const doCancel = async () => {
     if (!confirmCancel) return;
@@ -51,16 +63,35 @@ export default function ParkedScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.between}>
-          <Header title="Antrian transaksi" subtitle={`${list.length} transaksi diparkir`} />
+          <Header title="Antrian transaksi" subtitle={`${filtered.length}${query ? ` / ${list.length}` : ""} transaksi diparkir`} />
           <Pressable onPress={() => router.back()}><Ionicons name="chevron-back" size={26} color={colors.onSurface} /></Pressable>
         </View>
+        {/* Search box */}
+        <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceTertiary, borderRadius: 12, paddingHorizontal: 12, marginBottom: 10, minHeight: 44 }}>
+          <Ionicons name="search-outline" size={18} color={colors.muted} />
+          <TextInput
+            testID="parked-search"
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Cari nama pelanggan, label antrian, atau produk…"
+            placeholderTextColor={colors.muted}
+            style={{ flex: 1, marginLeft: 8, color: colors.onSurface, fontSize: 14, paddingVertical: 8 }}
+            autoCapitalize="none"
+            returnKeyType="search"
+          />
+          {query ? (
+            <Pressable testID="parked-search-clear" onPress={() => setQuery("")} style={{ padding: 4 }}>
+              <Ionicons name="close-circle" size={18} color={colors.muted} />
+            </Pressable>
+          ) : null}
+        </View>
         <Text style={[styles.muted, { marginBottom: 10 }]}>Antrian akan hilang hanya bila dilanjutkan hingga selesai atau dibatalkan.</Text>
-        {list.length === 0 ? (
+        {filtered.length === 0 ? (
           <View style={styles.empty}>
-            <Ionicons name="layers-outline" size={44} color={colors.muted} />
-            <Text style={[styles.muted, { marginTop: 10 }]}>Belum ada antrian. Tekan tombol Park di kasir untuk menyimpan sementara.</Text>
+            <Ionicons name={query ? "search-outline" : "layers-outline"} size={44} color={colors.muted} />
+            <Text style={[styles.muted, { marginTop: 10 }]}>{query ? `Tidak ada antrian yang cocok dengan "${query}".` : "Belum ada antrian. Tekan tombol Park di kasir untuk menyimpan sementara."}</Text>
           </View>
-        ) : list.map((p) => (
+        ) : filtered.map((p) => (
           <View key={p.id} style={styles.card}>
             <View style={styles.between}>
               <View style={{ flex: 1 }}>
