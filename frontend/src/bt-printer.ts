@@ -15,12 +15,14 @@
 import * as Linking from "expo-linking";
 import { PermissionsAndroid, Platform } from "react-native";
 
-import { formatRupiah, PAYMENT_LABELS, type BusinessSettings, type TransactionDoc } from "@/src/api";
+import { apiRequest, formatRupiah, PAYMENT_LABELS, type BusinessSettings, type TransactionDoc } from "@/src/api";
 import { storage } from "@/src/utils/storage";
 
 export type PairedPrinter = { address: string; name: string };
 
 const PRINTER_KEY = "jtpoin_bt_printer";
+const KITCHEN_PRINTER_KEY = "jtpoin_bt_kitchen_printer";
+const LOGO_CACHE_KEY = "jtpoin_logo_escpos_cache_v2";
 
 type BtModule = typeof import("rn-bluetooth-classic-printer");
 let btCache: BtModule | null | undefined; // undefined = untried, null = unavailable
@@ -132,6 +134,47 @@ export async function getPairedPrinter(): Promise<PairedPrinter | null> {
   catch { return null; }
 }
 
+// ---------- Kitchen Printer (printer kedua) ----------
+export async function saveKitchenPrinter(printer: PairedPrinter | null): Promise<void> {
+  if (!printer) return storage.secureRemove(KITCHEN_PRINTER_KEY);
+  await storage.secureSet(KITCHEN_PRINTER_KEY, JSON.stringify(printer));
+}
+
+export async function getKitchenPrinter(): Promise<PairedPrinter | null> {
+  const raw = await storage.secureGet<string | null>(KITCHEN_PRINTER_KEY, null);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as PairedPrinter; }
+  catch { return null; }
+}
+
+// ---------- Logo ESC/POS (cached) ----------
+type LogoCache = { bytes_base64: string; width: 58 | 80; fetched_at: number };
+async function fetchLogoBytes(paperWidth: "58mm" | "80mm"): Promise<Uint8Array | null> {
+  const cacheKey = `${LOGO_CACHE_KEY}_${paperWidth}`;
+  try {
+    const cachedRaw = await storage.secureGet<string | null>(cacheKey, null);
+    if (cachedRaw) {
+      const parsed = JSON.parse(cachedRaw) as LogoCache;
+      // 1 jam cache
+      if (parsed.bytes_base64 && Date.now() - parsed.fetched_at < 60 * 60 * 1000) {
+        return Uint8Array.from(atob(parsed.bytes_base64), (c) => c.charCodeAt(0));
+      }
+    }
+  } catch { /* ignore */ }
+  try {
+    const res = await apiRequest<{ bytes_base64: string }>(`/settings/logo-escpos?width=${paperWidth}`);
+    if (!res.bytes_base64) return null;
+    const cache: LogoCache = { bytes_base64: res.bytes_base64, width: paperWidth === "80mm" ? 80 : 58, fetched_at: Date.now() };
+    await storage.secureSet(cacheKey, JSON.stringify(cache));
+    return Uint8Array.from(atob(res.bytes_base64), (c) => c.charCodeAt(0));
+  } catch { return null; }
+}
+
+/** Invalidate logo cache (e.g., setelah user upload logo baru). */
+export async function invalidateLogoCache(): Promise<void> {
+  await Promise.all([storage.secureRemove(`${LOGO_CACHE_KEY}_58mm`), storage.secureRemove(`${LOGO_CACHE_KEY}_80mm`)]);
+}
+
 // ---------- ESC/POS Builder (JS, menghasilkan base64) ----------
 const ESC = 0x1b, GS = 0x1d;
 
@@ -162,17 +205,23 @@ class EscposBuilder {
 }
 
 // ---------- Public: cetak ----------
+async function sendBase64ToPrinter(printer: PairedPrinter, base64: string, copies = 1): Promise<void> {
+  const bt = tryLoadBt();
+  if (!bt) throw new Error("Modul Bluetooth tidak tersedia. Butuh APK Android build.");
+  await connectPrinter(printer.address);
+  for (let i = 0; i < Math.max(1, copies); i++) {
+    const ok = await bt.printRaw(base64);
+    if (!ok) throw new Error(`Gagal mengirim data ke ${printer.name}. Coba cek koneksi.`);
+    if (i < copies - 1) await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
 async function sendBase64(base64: string, copies = 1): Promise<void> {
   const bt = tryLoadBt();
   if (!bt) throw new Error("Modul Bluetooth tidak tersedia. Butuh APK Android build.");
   const printer = await getPairedPrinter();
   if (!printer) throw new Error("Belum ada printer tersimpan. Pair printer di menu Printer Bluetooth dulu.");
-  await connectPrinter(printer.address);
-  for (let i = 0; i < Math.max(1, copies); i++) {
-    const ok = await bt.printRaw(base64);
-    if (!ok) throw new Error("Gagal mengirim data ke printer. Coba cek koneksi.");
-    if (i < copies - 1) await new Promise((r) => setTimeout(r, 400));
-  }
+  await sendBase64ToPrinter(printer, base64, copies);
 }
 
 export async function testPrint(printer: PairedPrinter): Promise<void> {
@@ -209,11 +258,21 @@ export async function printReceipt(
   options: { openCashDrawer?: boolean; copies?: number } = {},
 ): Promise<void> {
   const widthMm: 58 | 80 = settings.receipt_width === "80mm" ? 80 : 58;
+  const paperWidth: "58mm" | "80mm" = widthMm === 80 ? "80mm" : "58mm";
   const cols = widthMm === 80 ? 48 : 32;
   const sep = "-".repeat(cols);
   const b = new EscposBuilder();
   b.init().codePage();
   if (options.openCashDrawer || settings.cashdrawer_enabled) b.cashDrawer();
+
+  // --- Logo (ESC/POS raster, cached) ---
+  if (settings.logo_base64) {
+    try {
+      const logoBytes = await fetchLogoBytes(paperWidth);
+      if (logoBytes && logoBytes.length) b.push(...Array.from(logoBytes));
+    } catch { /* abaikan logo kalau gagal fetch */ }
+  }
+
   b.align("center").bold(true).double(true).line(settings.business_name).double(false).bold(false);
   const headerLines = (settings.header_lines ?? []).filter(Boolean).slice(0, 4);
   if (headerLines.length) headerLines.forEach((l) => b.line(l));
@@ -229,7 +288,8 @@ export async function printReceipt(
   b.line(sep);
   (tx.items ?? []).forEach((i) => {
     b.line(`${i.name}${i.unit ? ` (${i.unit})` : ""}`);
-    b.line(padLine(`  ${i.quantity} x ${formatRupiah(i.price)}`, formatRupiah(i.price * i.quantity), cols));
+    const qtyStr = Number(i.quantity).toLocaleString("id-ID", { maximumFractionDigits: 3 });
+    b.line(padLine(`  ${qtyStr} x ${formatRupiah(i.price)}`, formatRupiah(i.price * i.quantity), cols));
     if (i.discount) b.line(padLine("  Diskon", `-${formatRupiah(i.discount)}`, cols));
   });
   b.line(sep);
@@ -251,6 +311,38 @@ export async function printReceipt(
   b.feed(3).cut();
 
   await sendBase64(b.base64(), options.copies ?? 1);
+}
+
+/** Cetak order dapur ke printer kedua (kitchen printer). Hanya item dengan kitchen_print=true. */
+export async function printKitchenOrder(
+  tx: TransactionDoc,
+  settings: BusinessSettings,
+): Promise<void> {
+  const kitchenItems = (tx.items ?? []).filter((i) => i.kitchen_print);
+  if (kitchenItems.length === 0) return; // tidak ada item dapur, skip
+  const kitchen = await getKitchenPrinter();
+  if (!kitchen) throw new Error("Printer dapur belum di-set. Buka menu Printer Bluetooth → tab Printer Dapur.");
+  const widthMm: 58 | 80 = settings.receipt_width === "80mm" ? 80 : 58;
+  const cols = widthMm === 80 ? 48 : 32;
+  const sep = "-".repeat(cols);
+  const b = new EscposBuilder();
+  b.init().codePage()
+    .align("center").bold(true).double(true).line("ORDER DAPUR").double(false).bold(false)
+    .line(settings.business_name)
+    .line(sep)
+    .align("left")
+    .line(`Invoice: ${tx.invoice_no ?? "-"}`)
+    .line(`Jam    : ${new Date(tx.created_at).toLocaleString("id-ID")}`)
+    .line(`Plg    : ${tx.customer_name ?? "Umum"}`)
+    .line(sep);
+  kitchenItems.forEach((i) => {
+    const qtyStr = Number(i.quantity).toLocaleString("id-ID", { maximumFractionDigits: 3 });
+    b.bold(true).line(`${qtyStr} x ${i.name}${i.unit ? ` (${i.unit})` : ""}`).bold(false);
+  });
+  b.line(sep);
+  if (tx.note) { b.line("Catatan:"); b.line(tx.note); b.line(sep); }
+  b.align("center").line("** Siapkan segera **").feed(3).cut();
+  await sendBase64ToPrinter(kitchen, b.base64(), 1);
 }
 
 export async function openCashDrawerOnly(): Promise<void> {

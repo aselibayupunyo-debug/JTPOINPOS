@@ -102,3 +102,14 @@ Backend testing: **219/219 PASS** (191 regression + 28 new iter-11 tests mencaku
 - Price level toggle (checkbox pakai level harga atau tidak)
 - Multi-printer dapur routing
 - **Full offline migration**: Rewrite auth + semua endpoint API ke SQLite murni (butuh dedicated session, major arch change).
+
+## Session 2026-10 (Iter 14) — Logo Struk + Multi-Printer Dapur + Toggle Level Harga
+45. **Logo tercetak di struk thermal**: Backend endpoint baru `GET /api/settings/logo-escpos?width=58mm|80mm&max_height=180` → mengembalikan ESC/POS raster command (base64) dari `logo_base64` di BusinessSettings. Pakai Pillow (Floyd-Steinberg dither, aspect-ratio preserved, flat white background, max height cap). Mendukung logo persegi maupun persegi panjang.
+46. **Frontend logo cache**: `bt-printer.ts` auto-fetch logo bytes 1x per sesi (cache 1 jam via SecureStore), prepend ke tiap `printReceipt`. Cache otomatis invalidate saat user save settings baru lewat `invalidateLogoCache()`.
+47. **Multi-printer dapur**: Printer kedua tersimpan di key `jtpoin_bt_kitchen_printer`. UI `bluetooth-printer.tsx` sekarang punya 2 tab: "Printer Struk" vs "Printer Dapur". Fungsi `printKitchenOrder(tx, settings)` kirim mini-struk ke printer dapur (hanya item dengan `kitchen_print=true`, bold item names, catatan transaksi). Auto-trigger di akhir checkout kasir kalau ada item tag dapur.
+48. **Toggle level harga per-produk**: Backend `ProductInput.use_price_levels: bool = False`. Frontend product-form sudah ada Switch "Pakai level harga". Logika di kasir: `priceOf(product)` hanya pakai `product.prices[priceLevel]` kalau `product.use_price_levels !== false` (backward compat: produk lama tanpa field → tetap pakai). Produk baru dengan toggle OFF akan selalu pakai `product.price` tunggal.
+
+Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
+
+**TODO (sesi berikutnya)**:
+- **Full offline migration**: Rewrite auth + semua endpoint API ke SQLite murni (butuh dedicated session besar).

@@ -15,6 +15,11 @@ from jose import JWTError, jwt
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import pandas as pd
 from io import BytesIO
+import base64 as b64_lib
+try:
+    from PIL import Image  # noqa: WPS433
+except Exception:  # pragma: no cover
+    Image = None  # type: ignore
 
 
 ROOT_DIR = Path(__file__).parent
@@ -73,6 +78,7 @@ class ProductInput(BaseModel):
     stock: int = Field(default=0, ge=0)
     min_stock: int = Field(default=5, ge=0)
     kitchen_print: bool = False
+    use_price_levels: bool = False
     image_base64: Optional[str] = None
 
 
@@ -970,6 +976,82 @@ async def update_settings(payload: BusinessSettingsInput, user: dict = Depends(c
         await db.users.update_many({"business_id": user["business_id"]}, {"$set": {"business_name": update["business_name"]}})
     doc = await db.business_settings.find_one({"business_id": user["business_id"]}, {"_id": 0, "business_id": 0})
     return doc
+
+
+def _escpos_raster_from_image(img: "Image.Image", target_width_px: int) -> bytes:
+    """Convert a PIL image to an ESC/POS GS v 0 raster command (monochrome, aspect-preserving)."""
+    # Resize preserving aspect ratio
+    w, h = img.size
+    scale = target_width_px / float(w)
+    new_w = target_width_px
+    new_h = max(1, int(round(h * scale)))
+    img = img.convert("RGBA")
+    # Flatten against white so transparent backgrounds don't come out solid-black
+    bg = Image.new("RGB", (w, h), (255, 255, 255))
+    bg.paste(img, mask=img.split()[3])
+    img = bg.resize((new_w, new_h), Image.LANCZOS).convert("L")  # grayscale
+    img = img.convert("1", dither=Image.FLOYDSTEINBERG)  # 1-bit with dither
+    # Pack bits into bytes, 8 pixels per byte, row-major
+    bytes_per_row = (new_w + 7) // 8
+    data = bytearray()
+    pixels = img.load()
+    for y in range(new_h):
+        for xb in range(bytes_per_row):
+            byte = 0
+            for bit in range(8):
+                x = xb * 8 + bit
+                if x < new_w and pixels[x, y] == 0:  # 0 = black (print)
+                    byte |= 0x80 >> bit
+            data.append(byte)
+    # GS v 0 m xL xH yL yH + data
+    xL = bytes_per_row & 0xff
+    xH = (bytes_per_row >> 8) & 0xff
+    yL = new_h & 0xff
+    yH = (new_h >> 8) & 0xff
+    header = bytes([0x1d, 0x76, 0x30, 0x00, xL, xH, yL, yH])
+    return bytes([0x1b, 0x61, 0x01]) + header + bytes(data) + b"\n"  # center + raster + newline
+
+
+@api_router.get("/settings/logo-escpos")
+async def logo_escpos(
+    width: Literal["58mm", "80mm"] = "58mm",
+    max_height: int = 180,
+    user: dict = Depends(current_user),
+):
+    """Return the business logo converted to ESC/POS raster bytes (base64).
+
+    Mendukung logo kotak maupun persegi panjang — aspect ratio dipertahankan.
+    Logo diubah ke monochrome dengan Floyd-Steinberg dither agar hasil cetak
+    bagus di printer thermal.
+    """
+    if Image is None:
+        raise HTTPException(status_code=500, detail="PIL (Pillow) tidak tersedia di server")
+    doc = await db.business_settings.find_one({"business_id": user["business_id"]}, {"_id": 0, "logo_base64": 1})
+    data_uri = (doc or {}).get("logo_base64")
+    if not data_uri:
+        return {"bytes_base64": "", "width": 0, "height": 0, "note": "Belum ada logo"}
+    # Accept both pure base64 and data URI
+    if "," in data_uri:
+        data_uri = data_uri.split(",", 1)[1]
+    try:
+        raw = b64_lib.b64decode(data_uri, validate=False)
+        img = Image.open(BytesIO(raw))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Logo tidak bisa dibaca: {e}")
+    target_w = 384 if width == "58mm" else 576
+    # Cap height so very tall logos tidak menghabiskan kertas
+    w, h = img.size
+    aspect = h / float(w)
+    projected_h = int(round(target_w * aspect))
+    if projected_h > max_height and aspect > 0:
+        # Reduce target width so height fits
+        target_w = max(96, int(round(max_height / aspect)))
+    escpos_bytes = _escpos_raster_from_image(img, target_w)
+    return {
+        "bytes_base64": b64_lib.b64encode(escpos_bytes).decode("ascii"),
+        "width": target_w,
+        "height": min(projected_h, max_height),
+    }
 
 
 @api_router.get("/integrations/status")

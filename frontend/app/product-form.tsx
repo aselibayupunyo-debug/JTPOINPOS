@@ -29,6 +29,7 @@ export default function ProductFormScreen() {
   const [category, setCategory] = useState("Umum");
   const [barcode, setBarcode] = useState("");
   const [kitchenPrint, setKitchenPrint] = useState(false);
+  const [usePriceLevels, setUsePriceLevels] = useState(false);
   const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!!id);
@@ -41,6 +42,7 @@ export default function ProductFormScreen() {
         setName(match.name); setPrice(String(match.price)); setCost(String(match.cost));
         setStock(String(match.stock)); setMinStock(String(match.min_stock));
         setCategory(match.category); setBarcode(match.barcode); setKitchenPrint(!!match.kitchen_print);
+        setUsePriceLevels(!!match.use_price_levels);
         setImage(match.image_base64 ?? null);
         setProductType(match.product_type ?? "goods");
         setBaseUnit(match.base_unit ?? "Pcs");
@@ -85,6 +87,7 @@ export default function ProductFormScreen() {
         barcode: barcode.trim(),
         sku: barcode.trim(),
         kitchen_print: kitchenPrint,
+        use_price_levels: usePriceLevels,
         image_base64: image,
       });
       if (id) await apiRequest(`/products/${id}`, { method: "PUT", body });
@@ -181,6 +184,13 @@ export default function ProductFormScreen() {
             <Text style={styles.muted}>Aktifkan untuk makanan / minuman yang perlu dapur.</Text>
           </View>
           <Switch testID="kitchen-print-switch" value={kitchenPrint} onValueChange={setKitchenPrint} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} thumbColor={colors.onBrandPrimary} />
+        </View>
+        <View style={[styles.between, styles.card, { marginTop: 2 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.productName}>Pakai level harga</Text>
+            <Text style={styles.muted}>Aktifkan jika mau terapkan harga grosir / member untuk produk ini. Mati = selalu 1 harga.</Text>
+          </View>
+          <Switch testID="use-price-levels-switch" value={usePriceLevels} onValueChange={setUsePriceLevels} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} thumbColor={colors.onBrandPrimary} />
         </View>
         <Pressable testID="save-product-button" disabled={busy} onPress={save} style={[styles.primaryButton, busy && { opacity: 0.6 }]}>
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>{id ? "Simpan perubahan" : "Simpan produk"}</Text>}

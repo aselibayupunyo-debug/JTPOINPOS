@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, Promo, ReportSummary, Shift, syncMutation } from "@/src/api";
+import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, Promo, ReportSummary, Shift, syncMutation, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
@@ -161,7 +161,10 @@ export default function KasirScreen() {
   }
 
   const priceOf = (product: Product): number => {
-    if (priceLevel !== "default" && product.prices?.[priceLevel]) return product.prices[priceLevel];
+    // Hanya pakai level harga kalau produk mengaktifkan toggle `use_price_levels`.
+    if (product.use_price_levels !== false && priceLevel !== "default" && product.prices?.[priceLevel]) {
+      return product.prices[priceLevel];
+    }
     return product.price;
   };
 
@@ -539,6 +542,30 @@ export default function KasirScreen() {
             }
             await load();
             const txId = (result.data as { id?: string } | null)?.id;
+
+            // Auto-cetak order dapur (kitchen printer) kalau ada item tag dapur
+            try {
+              const kitchenItems = appliedCart.filter((i) => i.kitchen_print);
+              if (kitchenItems.length && settings && !result.queued) {
+                const { printKitchenOrder, getKitchenPrinter } = await import("@/src/bt-printer");
+                const kitchenPrinter = await getKitchenPrinter();
+                if (kitchenPrinter) {
+                  const fakeTx = (result.data as TransactionDoc | null) ?? {
+                    id: txId ?? "tmp", invoice_no: "AUTO", transaction_type: "sale" as const,
+                    payment_method: method.id, payment_method_label: method.name,
+                    items: appliedCart.map((i) => ({ product_id: i.product_id ?? i.id, name: i.name, quantity: i.quantity, price: i.price, cost: i.cost, discount: i.discount ?? 0, unit: i.unit ?? "", unit_factor: i.unit_factor ?? 1, kitchen_print: !!i.kitchen_print })),
+                    total: 0, subtotal: 0, paid_amount: 0, outstanding: 0,
+                    customer_name: cName, created_at: new Date().toISOString(),
+                    note,
+                  } as TransactionDoc;
+                  await printKitchenOrder(fakeTx, settings);
+                  toast.success("Order dapur dicetak", `${kitchenItems.length} item ke ${kitchenPrinter.name}`);
+                }
+              }
+            } catch (kerr) {
+              toast.info("Order dapur tidak tercetak", kerr instanceof Error ? kerr.message : "cek printer dapur");
+            }
+
             if (txId) router.push({ pathname: "/receipt", params: { id: txId } });
           } catch (e) {
             toast.error("Transaksi gagal", e instanceof Error ? e.message : undefined);

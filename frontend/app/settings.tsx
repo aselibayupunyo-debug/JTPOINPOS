@@ -37,6 +37,8 @@ export default function SettingsScreen() {
       const footer_lines = (settings.footer_lines ?? []).map((l) => (l ?? "").trim()).filter(Boolean).slice(0, 4);
       const next = await apiRequest<BusinessSettings>("/settings", { method: "PUT", body: JSON.stringify({ ...settings, header_lines, footer_lines }) });
       setSettings(next);
+      // Invalidate cached logo bytes so printer akan fetch versi terbaru
+      try { const { invalidateLogoCache } = await import("@/src/bt-printer"); await invalidateLogoCache(); } catch { /* ignore */ }
       toast.success("Pengaturan tersimpan");
     } catch (e) { toast.error("Gagal menyimpan", e instanceof Error ? e.message : undefined); }
     finally { setBusy(false); }

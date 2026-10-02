@@ -1,0 +1,63 @@
+{
+  "summary": "Iter-12 backend regression + feature verification for JTPOIN POS. Full regression PASS: 236/236 (219 carry-over + 17 NEW iter-12). Both new features behave to spec. (1) GET /api/settings/logo-escpos: without a stored logo returns 200 with {bytes_base64:'', width:0, height:0, note:'Belum ada logo'}; with a valid tiny PNG seeded via PUT /api/settings returns non-empty base64 ESC/POS raster containing the GS v 0 header (0x1D 0x76 0x30), width=384 for 58mm / up to 576 for 80mm, height respects max_height cap (verified with max_height=32); invalid stored logo_base64 returns 400 with detail 'Logo tidak bisa dibaca: ...'; invalid width enum returns 422; endpoint is auth-protected (401/403 without token). (2) ProductInput.use_price_levels: POST /api/products with use_price_levels=true persists correctly and GET returns true; POST without the field defaults to False and GET returns false; PUT toggles the flag back and forth and persists. (3) Regression smoke confirms sale + sale_return (with admin_password 400/401/200), reports summary daily+custom, integrations/status (bluetooth_printing.configured=true), products listing and settings projection (no mongo _id leak) all still PASS. No backend code changes were made; test file follows the existing module-scoped-session pattern.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/settings/logo-escpos",
+        "issue": "When PIL is unavailable the endpoint returns 500 with detail 'PIL (Pillow) tidak tersedia di server' instead of degrading gracefully. Pillow 12.3.0 is pinned in requirements.txt so this is defensive-only — the ImportError guard at server.py:19-22 silently sets Image=None. Consider logging a startup WARNING if Image is None so prod ops see it immediately. Non-blocking."
+      },
+      {
+        "endpoint": "GET /api/settings/logo-escpos",
+        "issue": "max_height cap re-derives target_w via `max(96, int(round(max_height / aspect)))` which can still render a 96px-wide raster even when the requested width is 58mm/384 — fine but a 1x1 PNG with aspect=1 and max_height=32 ends up with width=32 (not 96) because the actual _escpos_raster_from_image uses the final target_w. Verified visually in bytes: raster-header xL*8 matches the computed width. No bug — just worth noting the min clamp of 96 only applies in logo_escpos(), not inside the raster helper. Non-blocking."
+      },
+      {
+        "endpoint": "POST /api/products",
+        "issue": "Endpoint returns HTTP 200 (not 201) on successful create — the review-request spec mentioned 201. Behavior matches all prior iterations; not changed in iter-12. If main agent wants strict REST semantics, add status_code=201 to the decorator. Non-blocking."
+      },
+      {
+        "endpoint": "(carried) /app/backend/pytest.ini",
+        "issue": "Still ships `-n 2 --dist loadscope`; full regression must use `-o addopts=` to avoid cross-worker races on module-scoped seeded state. Not an endpoint bug."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter12_logo_escpos_pricelevels.py",
+    "/app/test_reports/pytest/iteration12_results.xml",
+    "/app/test_reports/pytest/iteration12_full.xml"
+  ],
+  "action_items": [
+    "(Optional) Consider returning HTTP 201 on POST /api/products for strict REST semantics (currently returns 200).",
+    "(Optional) Log a startup WARNING if `from PIL import Image` fails so the logo-escpos 500 path is loud in prod.",
+    "(Carried) Split server.py (>1770 lines) into routers for maintainability.",
+    "(Carried) Remove or override `-n 2 --dist loadscope` default in pytest.ini — future agents must remember `-o addopts=` for full regression."
+  ],
+  "critical_code_review_comments": [
+    "server.py:19-22 PIL import is wrapped in try/except setting Image=None — correct defensive import; endpoint explicitly checks `if Image is None: raise 500` before using Image.",
+    "server.py:81 ProductInput.use_price_levels: bool = False — added as a plain Pydantic field with safe default; model_dump() in create_product and update_product automatically persist and round-trip the flag. Zero migration needed because defaulting on read is handled by Pydantic when the field is absent in old documents (BUT only on the request side — see note below).",
+    "server.py:315 GET /products returns Mongo documents directly with projection {_id:0, business_id:0}. Products created BEFORE iter-12 won't have `use_price_levels` in their Mongo doc, so GET will omit the field on legacy rows. Tests here only create fresh products within the iter-12 business, so this isn't exercised. If frontend assumes the field is always present, main agent should either (a) backfill or (b) have the frontend default to False on missing. Low-priority.",
+    "server.py:981-1012 _escpos_raster_from_image correctly: resizes with LANCZOS preserving aspect, flattens alpha onto white, converts to grayscale then 1-bit with Floyd-Steinberg dither, packs 8 pixels/byte MSB-first, prefixes GS v 0 header with correct xL/xH/yL/yH little-endian byte counts, and prepends ESC a 1 (center alignment) + trailing newline. Verified by base64-decoding the response and asserting the GS v 0 marker.",
+    "server.py:1015-1054 logo_escpos endpoint: FastAPI Literal['58mm','80mm'] correctly returns 422 for invalid enum values; data-URI prefix stripped with `data_uri.split(',',1)[1]`; broad Exception catch for PIL open errors maps to HTTP 400 with detail prefixed by 'Logo tidak bisa dibaca'. Max-height cap recomputes target_w from aspect ratio and clamps to >=96. Height in response is `min(projected_h, max_height)` which may understate when target_w was already reduced to satisfy the cap — minor UI-cosmetic only.",
+    "server.py:1029 `find_one(..., {'_id':0, 'logo_base64':1})` correctly projects out _id; no serialization issues.",
+    "server.py:318-339 Products CRUD unchanged beyond the model additive change — use_price_levels round-trips through model_dump() in both POST and PUT; no index or query change needed.",
+    "No MongoDB _id leaks in any iter-12 payload (settings, products, transactions, reports)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter12_logo_escpos_pricelevels.py (NEW — 17 tests: 8 logo-escpos + 3 use_price_levels + 6 regression smoke)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 iter-12 isolated, 236/236 full regression serial run with `-o addopts=`)",
+    "frontend": "not tested (per request: backend only)"
+  },
+  "seed_data_creation": "Fresh TEST_Iter12 owner (iter12_<hex>/TestPass123!) via POST /api/auth/register, a tiny 1x1 PNG seeded as logo_base64 via PUT /api/settings, several TEST_Iter12 products (Kopi Levels/Teh Default/Toggle/Reg Kopi). One sale (qty 2 @ 20000 = 40000) and one sale_return issued inside the module-scoped business. All data isolated by business_id, no production impact.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `cd /app && EXPO_BACKEND_URL=https://kasir-android-pro.preview.emergentagent.com pytest backend/tests/ -o addopts= --tb=short` for full 236-test regression (~54s). The `-o addopts=` flag REMAINS REQUIRED (pytest.ini pins -n 2 --dist loadscope which is unsafe for iter-5 state). Iter-12 smoke suite is test_iter12_logo_escpos_pricelevels.py. Note TransactionInput field is `paid_amount` (NOT `paid`) — this was my first slip and the test file now uses `paid_amount` consistently. For logo-escpos tests, re-use the TINY_PNG_B64 constant in the file; invalid-logo test corrupts the stored logo and then restores it to the valid tiny PNG at teardown. If the backend changes the logo-escpos response shape (e.g. adds a `media_type` field) update TestLogoEscpos.test_logo_escpos_without_logo_returns_empty's key-set assertion accordingly.",
+  "rca_of_issue": "N/A — feature verification iteration. All iter-12 additions behave to spec. The Pillow import is correctly guarded (try/except -> Image=None, endpoint checks and 500s if missing). _escpos_raster_from_image produces correct GS v 0 raster bytes with the right header. ProductInput.use_price_levels is a plain bool field with False default — model_dump() round-trips it through both create_product and update_product unchanged. Zero regressions across 219 carry-over tests."
+}

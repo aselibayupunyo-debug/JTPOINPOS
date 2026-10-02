@@ -36,6 +36,7 @@ export type Product = {
   stock: number;
   min_stock: number;
   kitchen_print?: boolean;
+  use_price_levels?: boolean;
   image_base64?: string | null;
 };
 

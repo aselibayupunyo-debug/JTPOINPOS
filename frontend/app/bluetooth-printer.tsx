@@ -7,10 +7,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAppStyles } from "@/src/app-styles";
 import {
   disconnectPrinter,
+  getKitchenPrinter,
   getPairedPrinter,
   isPrinterAvailable,
   openBluetoothSettings,
   type PairedPrinter,
+  saveKitchenPrinter,
   savePairedPrinter,
   scanPrinters,
   testPrint,
@@ -18,6 +20,8 @@ import {
 import { Header } from "@/src/components/header";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
+
+type Slot = "main" | "kitchen";
 
 export default function BluetoothPrinterScreen() {
   const styles = useAppStyles();
@@ -29,13 +33,17 @@ export default function BluetoothPrinterScreen() {
   const [found, setFound] = useState<PairedPrinter[]>([]);
   const [scanning, setScanning] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
-  const [current, setCurrent] = useState<PairedPrinter | null>(null);
+  const [slot, setSlot] = useState<Slot>("main");
+  const [mainPrinter, setMainPrinter] = useState<PairedPrinter | null>(null);
+  const [kitchenPrinter, setKitchenPrinter] = useState<PairedPrinter | null>(null);
+  const current = slot === "main" ? mainPrinter : kitchenPrinter;
 
   const refresh = useCallback(async () => {
     const avail = await isPrinterAvailable();
     setAvailable(avail);
-    const saved = await getPairedPrinter();
-    setCurrent(saved);
+    const [main, kitchen] = await Promise.all([getPairedPrinter(), getKitchenPrinter()]);
+    setMainPrinter(main);
+    setKitchenPrinter(kitchen);
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -65,9 +73,9 @@ export default function BluetoothPrinterScreen() {
 
   const pickPrinter = async (p: PairedPrinter) => {
     try {
-      await savePairedPrinter(p);
-      setCurrent(p);
-      toast.success("Printer tersimpan", `${p.name} siap dipakai cetak struk.`);
+      if (slot === "main") { await savePairedPrinter(p); setMainPrinter(p); }
+      else { await saveKitchenPrinter(p); setKitchenPrinter(p); }
+      toast.success(`Printer ${slot === "main" ? "struk" : "dapur"} tersimpan`, `${p.name} siap dipakai.`);
     } catch (e) {
       toast.error("Gagal simpan printer", e instanceof Error ? e.message : undefined);
     }
@@ -86,14 +94,13 @@ export default function BluetoothPrinterScreen() {
   };
 
   const clearPrinter = async () => {
+    try { await disconnectPrinter(); } catch { /* ignore */ }
     try {
-      await disconnectPrinter();
-      await savePairedPrinter(null);
-      setCurrent(null);
-      toast.info("Printer dilepas", "Pilih printer baru untuk mulai mencetak.");
+      if (slot === "main") { await savePairedPrinter(null); setMainPrinter(null); }
+      else { await saveKitchenPrinter(null); setKitchenPrinter(null); }
+      toast.info(`Printer ${slot === "main" ? "struk" : "dapur"} dilepas`, "Pilih printer baru untuk mulai mencetak.");
     } catch {
-      await savePairedPrinter(null);
-      setCurrent(null);
+      if (slot === "main") setMainPrinter(null); else setKitchenPrinter(null);
     }
   };
 
@@ -110,6 +117,25 @@ export default function BluetoothPrinterScreen() {
             <Header title="Printer Bluetooth" subtitle="Thermal 58mm / 80mm · ESC/POS" />
           </View>
         </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {([
+            { key: "main", label: "Printer Struk", desc: mainPrinter?.name },
+            { key: "kitchen", label: "Printer Dapur", desc: kitchenPrinter?.name },
+          ] as const).map((item) => (
+            <Pressable key={item.key} testID={`slot-${item.key}`} onPress={() => setSlot(item.key)} style={[styles.chip, slot === item.key && styles.chipActive]}>
+              <Text style={[styles.chipText, slot === item.key && styles.chipTextActive]}>{item.label}{item.desc ? ` · ${item.desc.slice(0, 10)}` : ""}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        {slot === "kitchen" ? (
+          <View style={[styles.card, { backgroundColor: colors.brandTertiary }]}>
+            <Text style={styles.productName}>Routing order dapur</Text>
+            <Text style={[styles.muted, { marginTop: 4, lineHeight: 20 }]}>
+              Produk yang dicentang "Cetak ke printer dapur" akan otomatis dicetak ke printer kedua ini saat transaksi selesai (misal: order makanan ke dapur, order minuman ke bar).
+            </Text>
+          </View>
+        ) : null}
 
         {available === false ? (
           <View style={[styles.card, { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.warning }]}>
