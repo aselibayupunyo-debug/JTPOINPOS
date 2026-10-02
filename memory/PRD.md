@@ -1,6 +1,6 @@
-# KasirKu Pro — Product Requirements (Updated 2026-10)
+# JTPOIN POS — Product Requirements (Updated 2026-10, Offline Migration)
 
-Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to FastAPI/MongoDB).
+Free Android POS app in Bahasa Indonesia. **100% offline — semua data tersimpan di perangkat user via SQLite. Tidak ada koneksi server/cloud.**
 
 ## Features implemented
 - **Core POS**: Sales, Purchases, Sale/Purchase Returns, Cashflow, Stock, Debts (receivable/payable).
@@ -19,8 +19,16 @@ Free Android POS app in Bahasa Indonesia. Offline-first (SQLite + sync queue to 
 - **Users**: Owner/Manager/Cashier dengan permission granular.
 
 ## Tech
-- Backend: FastAPI + MongoDB (motor) + pandas/openpyxl/xlsxwriter for Excel export + JWT auth + bcrypt.
-- Frontend: Expo SDK, expo-router, expo-sqlite (offline), expo-print (PDF), expo-camera (barcode scan), bwip-js (barcode render), react-native-view-shot (JPEG), expo-sharing, @react-native-community/netinfo.
+- **Backend: NONE (fully offline).** Semua auth + endpoint API dirutekan ke `src/local-backend/` yang menyimpan data di SQLite perangkat via `expo-sqlite`. Server FastAPI/MongoDB sudah ditinggalkan.
+- Frontend: Expo SDK, expo-router, expo-sqlite (data persist), expo-crypto (PBKDF2-like password hashing), expo-print (PDF), expo-camera (barcode scan), bwip-js (barcode render), react-native-view-shot (JPEG), expo-sharing, `rn-bluetooth-classic-printer` (ESC/POS Bluetooth SPP).
+
+## Session 2026-10 Offline Migration (Iter 8)
+- **Full Offline Migration**: Semua API call (`apiRequest`, `cachedGet`, `syncMutation`) dirutekan ke `local-backend/index.ts` yang mem-dispatch ke handler lokal.
+- **Auth**: Password hashing via SHA-256 iterated (10k rounds) + per-user random salt. Session token acak dari `expo-crypto`.
+- **Seed Admin**: `admin` / `admin` auto-dibuat saat pertama kali app launch (jika tabel users kosong).
+- **Local DB Schema**: `users, sessions, business_settings, products, categories, payment_methods, contacts (customer+supplier), transactions_t, cash_entries, debts, parked, shifts, promos, audit_logs, counters` — semua idempotent `CREATE TABLE IF NOT EXISTS`.
+- **Decommissioned Sync**: `SyncProvider` jadi no-op; `flushQueue`/`pendingSyncCount` return 0; FastAPI backend tidak lagi dipanggil.
+- **Export Excel offline**: `/products/export` dan `/reports/export` sekarang generate CSV (buka di Excel/WPS) langsung dari SQLite tanpa server.
 
 ## Session 2026-10 Delivered (Iter 5–7)
 1. Produk Jasa (goods/service)

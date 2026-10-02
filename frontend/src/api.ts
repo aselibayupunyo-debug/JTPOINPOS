@@ -1,11 +1,12 @@
-import Constants from "expo-constants";
-
-import { cacheGet, cacheSet, dequeue, enqueue, listQueue, markQueueError, queueCount } from "@/src/local-db";
+/**
+ * API wrapper untuk JTPOIN POS — 100% offline.
+ *
+ * Semua request diteruskan ke `local-backend/index.ts` (SQLite di perangkat).
+ * Tidak ada koneksi jaringan ke server luar. Interface fungsi dipertahankan
+ * agar screens yang sudah ada tidak perlu diubah.
+ */
+import { localFetch } from "@/src/local-backend";
 import { storage } from "@/src/utils/storage";
-
-const baseUrl = String(
-  Constants.expoConfig?.extra?.backendUrl ?? process.env.EXPO_PUBLIC_BACKEND_URL ?? "",
-).replace(/\/$/, "");
 
 export const TOKEN_KEY = "kasirku_auth_token";
 
@@ -141,7 +142,7 @@ export type Contact = {
 };
 
 export type ReportSummary = {
-  period: "daily" | "monthly" | "yearly";
+  period: "daily" | "monthly" | "yearly" | "custom";
   sales_total: number;
   purchase_total: number;
   transaction_count: number;
@@ -213,73 +214,72 @@ export const PAYMENT_KIND_LABELS: Record<PaymentKind, string> = {
 };
 
 export class OfflineError extends Error {
-  constructor(message = "Perangkat sedang offline") { super(message); this.name = "OfflineError"; }
+  constructor(message = "Operasi tidak tersedia saat offline") { super(message); this.name = "OfflineError"; }
 }
 
-async function rawFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
-  const headers = new Headers(options.headers);
-  if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(`${baseUrl}/api${path}`, { ...options, headers });
+// ---------------------------------------------------------------------------
+// Core request — rutekan ke local backend. Interface tetap seperti `fetch()`-like.
+// ---------------------------------------------------------------------------
+
+type Method = "GET" | "POST" | "PUT" | "DELETE";
+
+function parseMethod(m: string | undefined): Method {
+  const up = (m || "GET").toUpperCase();
+  if (up === "GET" || up === "POST" || up === "PUT" || up === "DELETE") return up;
+  return "GET";
+}
+
+function parseBody(body: BodyInit | null | undefined): any {
+  if (body === null || body === undefined) return null;
+  if (typeof body === "string") {
+    try { return JSON.parse(body); } catch { return body; }
+  }
+  // FormData / Blob / ArrayBuffer not supported in offline mode
+  return null;
 }
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await rawFetch(path, options);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail ?? "Terjadi kesalahan koneksi");
-  return body as T;
+  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
+  const method = parseMethod(options.method);
+  const body = parseBody(options.body as any);
+  const res = await localFetch({ method, path, body, token });
+  if (res.status >= 400) {
+    const detail = (res.data && typeof res.data === "object" && "detail" in res.data) ? String(res.data.detail) : "Terjadi kesalahan";
+    throw new Error(detail);
+  }
+  return res.data as T;
 }
 
-/** GET with cache-first on offline failure. Writes successful responses to local SQLite cache. */
+/**
+ * Dipertahankan untuk kompatibilitas layar lama. Di mode offline tidak ada
+ * perbedaan antara "cache" dan "fresh" — jadi `fromCache` selalu false.
+ */
 export async function cachedGet<T>(path: string): Promise<{ data: T; fromCache: boolean }> {
-  try {
-    const data = await apiRequest<T>(path);
-    await cacheSet(`get:${path}`, data);
-    return { data, fromCache: false };
-  } catch (e) {
-    const cached = await cacheGet<T>(`get:${path}`);
-    if (cached !== null) return { data: cached, fromCache: true };
-    throw e;
-  }
+  const data = await apiRequest<T>(path);
+  return { data, fromCache: false };
 }
 
-/** POST/PUT/DELETE that falls back to local offline queue when network fails. */
+/**
+ * Dipertahankan untuk kompatibilitas. Di mode offline, semua mutation
+ * langsung tereksekusi (tidak pernah di-queue).
+ */
 export async function syncMutation(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<{ data: unknown | null; queued: boolean }> {
-  const payload = body === undefined ? null : JSON.stringify(body);
-  try {
-    const res = await rawFetch(path, { method, body: payload ?? undefined });
-    const parsed = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(parsed.detail ?? "Permintaan ditolak server");
-    return { data: parsed, queued: false };
-  } catch (e) {
-    const isNetwork = e instanceof TypeError || (e instanceof Error && /network/i.test(e.message));
-    if (!isNetwork) throw e;
-    await enqueue({ method, path, body: payload });
-    return { data: null, queued: true };
-  }
+  const data = await apiRequest<unknown>(path, {
+    method,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { data, queued: false };
 }
 
+// Offline mode — tidak ada queue, langsung return 0 / no-op.
 export async function flushQueue(): Promise<{ sent: number; failed: number }> {
-  const ops = await listQueue();
-  let sent = 0;
-  let failed = 0;
-  for (const op of ops) {
-    try {
-      const res = await rawFetch(op.path, { method: op.method, body: op.body ?? undefined });
-      if (!res.ok && res.status !== 404 && res.status !== 409) throw new Error(await res.text());
-      await dequeue(op.id);
-      sent += 1;
-    } catch (err) {
-      failed += 1;
-      await markQueueError(op.id, err instanceof Error ? err.message : "Unknown error");
-      break;
-    }
-  }
-  return { sent, failed };
+  return { sent: 0, failed: 0 };
 }
+export async function pendingSyncCount(): Promise<number> { return 0; }
 
-export async function pendingSyncCount(): Promise<number> { return queueCount(); }
+// ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
 
 export async function login(username: string, password: string) {
   return apiRequest<{ token: string; user: User }>("/auth/login", {
@@ -288,76 +288,117 @@ export async function login(username: string, password: string) {
 }
 
 export async function register(payload: { business_name: string; owner_name: string; username: string; password: string }) {
+  // Map ke format handler lokal (display_name).
   return apiRequest<{ token: string; user: User }>("/auth/register", {
-    method: "POST", body: JSON.stringify(payload),
+    method: "POST",
+    body: JSON.stringify({
+      business_name: payload.business_name,
+      display_name: payload.owner_name,
+      username: payload.username,
+      password: payload.password,
+    }),
   });
 }
 
 export async function saveToken(token: string) { return storage.secureSet(TOKEN_KEY, token); }
 export async function clearToken() { return storage.secureRemove(TOKEN_KEY); }
 
-export async function uploadProducts(file: { uri: string; name: string; mimeType?: string | null }) {
-  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
-  const form = new FormData();
-  form.append("file", { uri: file.uri, name: file.name, type: file.mimeType ?? "application/octet-stream" } as unknown as Blob);
-  const response = await fetch(`${baseUrl}/api/products/import`, {
-    method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : undefined, body: form,
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail ?? "Import gagal");
-  return body as { imported: number };
+// ---------------------------------------------------------------------------
+// Import/Export Excel — perlu diproses secara lokal.
+// ---------------------------------------------------------------------------
+
+export async function uploadProducts(_file: { uri: string; name: string; mimeType?: string | null }): Promise<{ imported: number }> {
+  throw new OfflineError("Import produk via Excel sedang dinonaktifkan di mode offline. Tambah produk manual lewat menu Stok.");
 }
 
-/** Download products export (xlsx) as base64 for later saving via expo-file-system. */
 export async function downloadProductsExcel(): Promise<{ base64: string; filename: string }> {
-  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
-  const response = await fetch(`${baseUrl}/api/products/export`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
-  if (!response.ok) {
-    const err = await response.text().catch(() => "");
-    throw new Error(err || "Gagal mengunduh file");
-  }
-  const disposition = response.headers.get("content-disposition") || "";
-  const match = /filename="?([^";]+)"?/i.exec(disposition);
-  const filename = match ? match[1] : `produk-${Date.now()}.xlsx`;
-  const buf = await response.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  // btoa is available on native (Hermes) via global polyfill
-  const base64 = btoa(binary);
-  return { base64, filename };
+  // Hasilkan CSV sederhana (bisa dibuka Excel) berisi daftar produk saat ini.
+  const products = await apiRequest<Product[]>("/products");
+  const header = ["name", "sku", "barcode", "category", "price", "cost", "stock", "min_stock", "base_unit", "product_type"];
+  const rows = products.map((p) => header.map((k) => csvCell((p as any)[k])).join(","));
+  const csv = [header.join(","), ...rows].join("\n");
+  const base64 = toBase64(csv);
+  return { base64, filename: `produk-${Date.now()}.csv` };
 }
 
-/** Download Excel laporan multi-sheet untuk periode tertentu. */
 export async function downloadReportsExcel(period: "daily" | "monthly" | "yearly" | "custom", start?: string, end?: string): Promise<{ base64: string; filename: string }> {
-  const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
   const qs = new URLSearchParams({ period });
   if (start) qs.set("start", start);
   if (end) qs.set("end", end);
-  const response = await fetch(`${baseUrl}/api/reports/export?${qs.toString()}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
-  if (!response.ok) {
-    const err = await response.text().catch(() => "");
-    throw new Error(err || "Gagal mengunduh laporan");
+  const [summary, products, customers, operators, salesItems] = await Promise.all([
+    apiRequest<ReportSummary>(`/reports/summary?${qs}`).catch(() => null),
+    apiRequest<{ rows: ProductReportRow[] }>(`/reports/products?${qs}`).catch(() => ({ rows: [] })),
+    apiRequest<{ rows: CustomerReportRow[] }>(`/reports/customers?${qs}`).catch(() => ({ rows: [] })),
+    apiRequest<{ rows: OperatorReportRow[] }>(`/reports/operators?${qs}`).catch(() => ({ rows: [] })),
+    apiRequest<{ rows: SalesItemRow[] }>(`/reports/sales-items?${qs}`).catch(() => ({ rows: [] })),
+  ]);
+
+  const sections: string[] = [];
+  if (summary) {
+    sections.push("Ringkasan");
+    sections.push("Field,Value");
+    for (const [k, v] of Object.entries(summary)) sections.push(`${k},${csvCell(v)}`);
+    sections.push("");
   }
-  const disposition = response.headers.get("content-disposition") || "";
-  const match = /filename="?([^";]+)"?/i.exec(disposition);
-  const filename = match ? match[1] : `laporan-${Date.now()}.xlsx`;
-  const buf = await response.arrayBuffer();
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  const base64 = btoa(binary);
-  return { base64, filename };
+  const addRows = (title: string, rows: any[], keys: string[]) => {
+    sections.push(title);
+    sections.push(keys.join(","));
+    for (const r of rows) sections.push(keys.map((k) => csvCell(r[k])).join(","));
+    sections.push("");
+  };
+  addRows("Produk", products.rows, ["name", "quantity", "revenue", "profit"]);
+  addRows("Pelanggan", customers.rows, ["customer_name", "transaction_count", "total_spent", "outstanding", "profit"]);
+  addRows("Operator", operators.rows, ["name", "transaction_count", "total_sales", "profit"]);
+  addRows("Detail Penjualan", salesItems.rows, ["invoice_no", "created_at", "customer_name", "operator_name", "name", "quantity", "unit", "price", "subtotal"]);
+
+  const csv = sections.join("\n");
+  const base64 = toBase64(csv);
+  return { base64, filename: `laporan-${period}-${Date.now()}.csv` };
 }
 
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function toBase64(input: string): string {
+  // UTF-8 safe base64 (Hermes global `btoa` only handles latin-1).
+  const bytes = utf8Encode(input);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(binary);
+}
+
+function utf8Encode(s: string): Uint8Array {
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i);
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) { out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f)); }
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      const c2 = s.charCodeAt(++i);
+      const cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+      out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    } else { out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f)); }
+  }
+  return new Uint8Array(out);
+}
+
+// ---------------------------------------------------------------------------
+// Profile / admin
+// ---------------------------------------------------------------------------
+
 export async function updateProfile(payload: { name?: string; username?: string; current_password: string; new_password?: string }) {
-  return apiRequest<{ ok: boolean; message?: string }>("/profile", { method: "PUT", body: JSON.stringify(payload) });
+  // Map `name` -> `display_name` untuk handler lokal.
+  const body: any = { current_password: payload.current_password };
+  if (payload.name) body.display_name = payload.name;
+  if (payload.username) body.username = payload.username;
+  if (payload.new_password) body.new_password = payload.new_password;
+  const u = await apiRequest<User>("/profile", { method: "PUT", body: JSON.stringify(body) });
+  return { ok: true, user: u };
 }
 
 export type AuditLog = {
@@ -381,6 +422,9 @@ export async function adminDeleteAllProducts(password: string) {
   return apiRequest<{ ok: boolean; deleted: number }>("/admin/delete-all-products", { method: "POST", body: JSON.stringify({ password }) });
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 export function formatRupiah(value: number) {
   return `Rp ${Math.round(value).toLocaleString("id-ID")}`;

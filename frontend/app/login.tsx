@@ -74,7 +74,7 @@ export default function LoginScreen() {
               <Text style={{ color: colors.brandPrimary, fontSize: 14, fontWeight: "700" }}>{isRegister ? "Sudah punya akun? Masuk" : "Daftar bisnis baru"}</Text>
             </Pressable>
           </View>
-          <Text style={[styles.muted, { textAlign: "center", marginTop: 16 }]}>Semua barang & transaksi tanpa batas · Data tersimpan di server Anda.</Text>
+          <Text style={[styles.muted, { textAlign: "center", marginTop: 16 }]}>Semua data tersimpan 100% di perangkat Anda · Tanpa server · Tanpa internet.</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

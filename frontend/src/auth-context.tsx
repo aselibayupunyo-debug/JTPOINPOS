@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { apiRequest, clearToken, hasPermission, Permission, saveToken, User } from "@/src/api";
+import { initLocalBackend } from "@/src/local-backend";
 import { storage } from "@/src/utils/storage";
 
 type AuthContextValue = {
@@ -31,10 +32,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    storage.secureGet<string | null>("kasirku_auth_token", null).then(async (token) => {
-      if (token) await refresh();
-      setBooting(false);
-    });
+    let cancelled = false;
+    (async () => {
+      // Guard: initialization should not block boot longer than 5s even if
+      // SQLite fails to load (common in web preview). On native builds this
+      // resolves in <100ms.
+      await Promise.race([
+        initLocalBackend().catch(() => undefined),
+        new Promise((r) => setTimeout(r, 5000)),
+      ]);
+      if (cancelled) return;
+      const token = await storage.secureGet<string | null>("kasirku_auth_token", null);
+      if (token) {
+        await Promise.race([
+          refresh(),
+          new Promise((r) => setTimeout(r, 5000)),
+        ]);
+      }
+      if (!cancelled) setBooting(false);
+    })();
+    return () => { cancelled = true; };
   }, [refresh]);
 
   const signIn = useCallback(async ({ token, user: next }: { token: string; user: User }) => {
