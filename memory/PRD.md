@@ -76,3 +76,12 @@ Backend testing: 191/191 PASS (168 regression + 23 new custom range/export tests
     - **`new Date(bad).toISOString()`** throw RangeError untuk string tanggal invalid → bungkus try/catch + validasi regex YYYY-MM-DD.
     - **500 transaksi diparse+render** = Hermes OOM di HP RAM rendah → turunkan ke limit=300, slice(0, 200) untuk render.
     - **Null field crash** (`t.items.length`, `o.name.slice(…)`, `c.customer_name.slice(…)`) kalau dokumen rusak → tambah `?? "-"`/`?? 0`/`Array.isArray` guard di setiap render.
+
+## Session 2026-10 (Iter 12) — Native Crash + Direct BT Printing Fix
+34. **Hapus `react-native-thermal-printer-driver` (TurboModule)**: Library ini menyebabkan "JTPOIN POS terus berhenti" di APK karena pendaftaran TurboModule gagal pada arsitektur bawaan Expo build. Semua referensi di app.json plugins & kode dihapus.
+35. **Pakai `rn-bluetooth-classic-printer@0.2.1`**: Menggunakan `expo-modules-core` (auto-link, OLD architecture compatible) → tidak crash saat APK startup. Mendukung Bluetooth Classic SPP (standar printer thermal POS Indonesia: Bellav, Panda, Xprinter, Rongta, dll).
+36. **Direct cetak tanpa helper app**: Printer dipair di Pengaturan Bluetooth Android, aplikasi JTPOIN POS langsung konek & kirim ESC/POS raw bytes via SPP. User tidak perlu RawBT atau aplikasi lain.
+37. **Rewrite `/app/frontend/src/bt-printer.ts`**: Lazy `require()` modul (tidak diload di web/Expo Go), `scanPrinters` (paired + discovery), `connectPrinter`, `savePairedPrinter` (SecureStore), `testPrint`, `printReceipt` (58/80mm + cash drawer), `openCashDrawerOnly`, `openBluetoothSettings` (Intent BLUETOOTH_SETTINGS).
+38. **Permission handling Android**: `PermissionsAndroid.requestMultiple` auto-detect SDK level (31+ pakai BLUETOOTH_SCAN/CONNECT, lama pakai ACCESS_FINE_LOCATION). NEVER_ASK_AGAIN → arahkan user ke app settings.
+
+**PENTING UNTUK USER**: APK yang sekarang di HP masih berisi library lama yang crash. Harus **Publish ulang** dari aplikasi lalu **generate APK baru** untuk pakai library yang stabil.

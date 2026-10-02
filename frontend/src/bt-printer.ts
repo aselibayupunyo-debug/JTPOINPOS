@@ -1,119 +1,125 @@
 /**
- * Bluetooth Thermal Printer utility (ESC/POS) menggunakan react-native-thermal-printer-driver.
+ * Direct Bluetooth Thermal Printer helper menggunakan `rn-bluetooth-classic-printer`.
  *
- * CATATAN:
- *  - Native module (TurboModule) — HANYA berfungsi di APK/IPA build.
- *  - Di web atau Expo Go, semua fungsi akan throw dengan pesan jelas.
- *  - Printer tersimpan di SecureStore per-device, bukan di backend, karena tiap device
- *    biasanya dipasangkan dengan 1 printer fisik yang berbeda.
+ * STRATEGI:
+ *  - Modul ini adalah Expo native module (auto-linked), bukan TurboModule
+ *    standalone. Pendaftaran modul mengikuti sistem Expo sehingga tidak crash
+ *    di APK.
+ *  - Hanya mendukung Android (Bluetooth Classic SPP) — sesuai printer thermal
+ *    POS Indonesia yang umum.
+ *  - Pairing printer dilakukan di menu Pengaturan Bluetooth Android, kemudian
+ *    aplikasi memilih dari daftar paired device.
+ *  - Printer tersimpan di SecureStore per-device.
+ *  - Lazy require: di web/Expo Go, modul tidak dibebankan sehingga tidak crash.
  */
-import { Platform } from "react-native";
+import * as Linking from "expo-linking";
+import { PermissionsAndroid, Platform } from "react-native";
 
 import { formatRupiah, PAYMENT_LABELS, type BusinessSettings, type TransactionDoc } from "@/src/api";
 import { storage } from "@/src/utils/storage";
 
 export type PairedPrinter = { address: string; name: string };
 
-const PRINTER_KEY = "kasirku_bt_printer";
+const PRINTER_KEY = "jtpoin_bt_printer";
 
-// Lazy-loaded ThermalPrinter untuk menghindari crash di web/Expo Go
-type ThermalPrinterApi = {
-  ThermalPrinter: typeof import("react-native-thermal-printer-driver").default;
-  ESCPOSBuilder: typeof import("react-native-thermal-printer-driver").ESCPOSBuilder;
-};
-
-let apiPromise: Promise<ThermalPrinterApi> | null = null;
-function loadApi(): Promise<ThermalPrinterApi> {
-  if (apiPromise) return apiPromise;
-  if (Platform.OS === "web") {
-    apiPromise = Promise.reject(new Error("Printer thermal hanya tersedia di aplikasi mobile (Android/iOS build)."));
-    return apiPromise;
+type BtModule = typeof import("rn-bluetooth-classic-printer");
+let btCache: BtModule | null | undefined; // undefined = untried, null = unavailable
+function tryLoadBt(): BtModule | null {
+  if (btCache !== undefined) return btCache;
+  if (Platform.OS !== "android") { btCache = null; return null; }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("rn-bluetooth-classic-printer") as BtModule;
+    if (!mod || typeof mod.getPairedDevices !== "function") { btCache = null; return null; }
+    btCache = mod;
+    return mod;
+  } catch {
+    btCache = null;
+    return null;
   }
-  apiPromise = (async () => {
-    try {
-      const mod = await import("react-native-thermal-printer-driver");
-      // Access the TurboModule to force module registration
-      if (!mod.default) throw new Error("Module tidak terdaftar");
-      return { ThermalPrinter: mod.default, ESCPOSBuilder: mod.ESCPOSBuilder };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `Modul printer thermal tidak terdeteksi. Pastikan Anda menjalankan aplikasi dari APK/IPA build (bukan Expo Go). Detail: ${msg}`,
-      );
-    }
-  })();
-  return apiPromise;
 }
 
 export async function isPrinterAvailable(): Promise<boolean> {
-  try {
-    await loadApi();
-    return true;
-  } catch {
-    return false;
+  return tryLoadBt() !== null;
+}
+
+// ---------- Permission ----------
+async function ensurePermissions(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  const perms: string[] = [];
+  const sdk = Platform.Version as number;
+  if (sdk >= 31) {
+    perms.push(
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+    );
+  } else {
+    perms.push(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    );
+  }
+  const result = await PermissionsAndroid.requestMultiple(perms as Parameters<typeof PermissionsAndroid.requestMultiple>[0]);
+  const denied = Object.entries(result).filter(([, v]) => v !== PermissionsAndroid.RESULTS.GRANTED);
+  if (denied.length) {
+    const neverAgain = denied.some(([, v]) => v === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN);
+    throw new Error(
+      neverAgain
+        ? "Izin Bluetooth ditolak permanen. Buka Pengaturan Android → Aplikasi → JTPOIN POS → Izin, lalu aktifkan Bluetooth & lokasi."
+        : "Izin Bluetooth diperlukan untuk mencetak struk.",
+    );
   }
 }
 
-export type ScanOutcome = { paired: { address: string; name: string }[]; found: { address: string; name: string }[] };
+// ---------- Scan / pair ----------
+export type ScanOutcome = { paired: PairedPrinter[]; found: PairedPrinter[] };
 
-export async function scanPrinters(timeoutMs = 10000): Promise<ScanOutcome> {
-  const { ThermalPrinter } = await loadApi();
-  // Timeout fallback — some devices never fire onScanCompleted
-  const scanPromise = ThermalPrinter.scan();
-  const timeout = new Promise<ScanOutcome>((_, reject) => setTimeout(() => reject(new Error("Timeout scan Bluetooth (coba aktifkan Bluetooth & lokasi device)")), timeoutMs));
-  const result = await Promise.race([scanPromise, timeout]);
-  return {
-    paired: (result.paired ?? []).map((d) => ({ address: d.address, name: d.name || d.address })),
-    found: (result.found ?? []).map((d) => ({ address: d.address, name: d.name || d.address })),
-  };
+export async function scanPrinters(timeoutMs = 12000): Promise<ScanOutcome> {
+  const bt = tryLoadBt();
+  if (!bt) throw new Error("Modul Bluetooth tidak tersedia. Butuh APK Android build (bukan Expo Go/web).");
+  await ensurePermissions();
+  if (!bt.isBluetoothEnabled()) {
+    const ok = await bt.requestEnableBluetooth().catch(() => false);
+    if (!ok) throw new Error("Bluetooth belum aktif. Aktifkan Bluetooth dulu di HP.");
+  }
+  const pairedRaw = await bt.getPairedDevices();
+  const paired: PairedPrinter[] = pairedRaw.map((d) => ({ address: d.id, name: d.name || d.id }));
+
+  const found: PairedPrinter[] = [];
+  const seen = new Set<string>();
+  const sub = bt.startScanning((d) => {
+    if (!seen.has(d.id)) { seen.add(d.id); found.push({ address: d.id, name: d.name || d.id }); }
+  });
+  await new Promise((r) => setTimeout(r, timeoutMs));
+  try { bt.stopScanning(); } catch { /* ignore */ }
+  try { sub.remove(); } catch { /* ignore */ }
+  return { paired, found };
 }
 
 export async function stopScan(): Promise<void> {
-  try {
-    const { ThermalPrinter } = await loadApi();
-    await ThermalPrinter.stopScan();
-  } catch { /* ignore */ }
+  const bt = tryLoadBt();
+  if (!bt) return;
+  try { bt.stopScanning(); } catch { /* ignore */ }
 }
 
-export async function connectPrinter(address: string, timeoutMs = 8000): Promise<void> {
-  const { ThermalPrinter } = await loadApi();
-  await ThermalPrinter.connect(address, { timeout: timeoutMs });
+// ---------- Connection ----------
+export async function connectPrinter(address: string): Promise<void> {
+  const bt = tryLoadBt();
+  if (!bt) throw new Error("Modul Bluetooth tidak tersedia.");
+  await ensurePermissions();
+  const current = bt.getConnectedDevice();
+  if (current && current.id === address) return;
+  if (current) { try { await bt.disconnect(); } catch { /* ignore */ } }
+  const ok = await bt.connectDevice(address);
+  if (!ok) throw new Error("Gagal konek ke printer. Pastikan printer menyala & sudah di-pair di Pengaturan Android.");
 }
 
-export async function disconnectPrinter(address?: string): Promise<void> {
-  try {
-    const { ThermalPrinter } = await loadApi();
-    await ThermalPrinter.disconnect(address);
-  } catch { /* ignore */ }
+export async function disconnectPrinter(_address?: string): Promise<void> {
+  const bt = tryLoadBt();
+  if (!bt) return;
+  try { await bt.disconnect(); } catch { /* ignore */ }
 }
 
-export async function testPrint(printer: PairedPrinter): Promise<void> {
-  const { ThermalPrinter, ESCPOSBuilder } = await loadApi();
-  const builder = new ESCPOSBuilder();
-  const bytes = builder
-    .init()
-    .codePage("cp858")
-    .align("center")
-    .bold(true)
-    .size(2)
-    .text("JTPOIN POS\n")
-    .size(1)
-    .bold(false)
-    .text("Tes koneksi printer\n")
-    .text(`${printer.name}\n`)
-    .text(`${new Date().toLocaleString("id-ID")}\n`)
-    .feed(1)
-    .align("left")
-    .text("Printer sudah terhubung dengan baik.\nTerima kasih.\n")
-    .feed(2)
-    .cut()
-    .bytes();
-  const res = await ThermalPrinter.printRaw(printer.address, bytes, { paperWidthMm: 58, timeout: 15000 });
-  if (!res.success) throw new Error(res.error?.message || "Gagal cetak uji");
-}
-
-// ---------- Persistensi printer per-device ----------
-
+// ---------- Persistence ----------
 export async function savePairedPrinter(printer: PairedPrinter | null): Promise<void> {
   if (!printer) return storage.secureRemove(PRINTER_KEY);
   await storage.secureSet(PRINTER_KEY, JSON.stringify(printer));
@@ -126,7 +132,69 @@ export async function getPairedPrinter(): Promise<PairedPrinter | null> {
   catch { return null; }
 }
 
-// ---------- Cetak struk transaksi ----------
+// ---------- ESC/POS Builder (JS, menghasilkan base64) ----------
+const ESC = 0x1b, GS = 0x1d;
+
+class EscposBuilder {
+  private bytes: number[] = [];
+  push(...b: number[]) { for (const x of b) this.bytes.push(x & 0xff); return this; }
+  init() { return this.push(ESC, 0x40); }
+  codePage() { return this.push(ESC, 0x74, 0x10); } // CP858 (contains €, umumnya kompatibel)
+  text(s: string) {
+    const clean = s.replace(/[^\x00-\xff\n\t]/g, "?").replace(/\r/g, "");
+    for (let i = 0; i < clean.length; i++) this.push(clean.charCodeAt(i));
+    return this;
+  }
+  line(s = "") { return this.text(s + "\n"); }
+  align(a: "left" | "center" | "right") { return this.push(ESC, 0x61, a === "left" ? 0 : a === "center" ? 1 : 2); }
+  bold(on: boolean) { return this.push(ESC, 0x45, on ? 1 : 0); }
+  double(on: boolean) { return this.push(GS, 0x21, on ? 0x11 : 0x00); }
+  feed(n = 1) { for (let i = 0; i < n; i++) this.push(0x0a); return this; }
+  cut() { return this.push(GS, 0x56, 0x01); }
+  cashDrawer() { return this.push(ESC, 0x70, 0x00, 0x19, 0xfa); }
+  base64() {
+    const chunk = 0x8000;
+    let bin = "";
+    for (let i = 0; i < this.bytes.length; i += chunk) bin += String.fromCharCode(...this.bytes.slice(i, i + chunk));
+    // eslint-disable-next-line no-restricted-globals
+    return typeof btoa !== "undefined" ? btoa(bin) : "";
+  }
+}
+
+// ---------- Public: cetak ----------
+async function sendBase64(base64: string, copies = 1): Promise<void> {
+  const bt = tryLoadBt();
+  if (!bt) throw new Error("Modul Bluetooth tidak tersedia. Butuh APK Android build.");
+  const printer = await getPairedPrinter();
+  if (!printer) throw new Error("Belum ada printer tersimpan. Pair printer di menu Printer Bluetooth dulu.");
+  await connectPrinter(printer.address);
+  for (let i = 0; i < Math.max(1, copies); i++) {
+    const ok = await bt.printRaw(base64);
+    if (!ok) throw new Error("Gagal mengirim data ke printer. Coba cek koneksi.");
+    if (i < copies - 1) await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
+export async function testPrint(printer: PairedPrinter): Promise<void> {
+  const bt = tryLoadBt();
+  if (!bt) throw new Error("Modul Bluetooth tidak tersedia.");
+  await connectPrinter(printer.address);
+  const b = new EscposBuilder();
+  b.init().codePage()
+    .align("center").bold(true).double(true).line("JTPOIN POS").double(false).bold(false)
+    .line("Tes koneksi printer")
+    .line(printer.name)
+    .line(new Date().toLocaleString("id-ID"))
+    .feed(1)
+    .align("left")
+    .line("Jika struk ini keluar rapi,")
+    .line("printer sudah siap digunakan.")
+    .line("Terima kasih.")
+    .feed(2)
+    .cut();
+  const ok = await bt.printRaw(b.base64());
+  if (!ok) throw new Error("Gagal cetak uji. Printer tidak merespons.");
+}
 
 function padLine(left: string, right: string, cols: number): string {
   const l = left.slice(0, cols - 1);
@@ -140,72 +208,61 @@ export async function printReceipt(
   settings: BusinessSettings,
   options: { openCashDrawer?: boolean; copies?: number } = {},
 ): Promise<void> {
-  const printer = await getPairedPrinter();
-  if (!printer) throw new Error("Belum ada printer terpasang. Buka menu Printer Bluetooth untuk mendaftarkan.");
-  const { ThermalPrinter, ESCPOSBuilder } = await loadApi();
   const widthMm: 58 | 80 = settings.receipt_width === "80mm" ? 80 : 58;
   const cols = widthMm === 80 ? 48 : 32;
   const sep = "-".repeat(cols);
-  const builder = new ESCPOSBuilder();
-  builder.init().codePage("cp858");
-  if (options.openCashDrawer || settings.cashdrawer_enabled) {
-    try { builder.cashDrawer(); } catch { /* ignore */ }
-  }
-  builder.align("center").bold(true).size(2).text(`${settings.business_name}\n`).size(1).bold(false);
+  const b = new EscposBuilder();
+  b.init().codePage();
+  if (options.openCashDrawer || settings.cashdrawer_enabled) b.cashDrawer();
+  b.align("center").bold(true).double(true).line(settings.business_name).double(false).bold(false);
   const headerLines = (settings.header_lines ?? []).filter(Boolean).slice(0, 4);
-  if (headerLines.length) headerLines.forEach((l) => builder.text(`${l}\n`));
+  if (headerLines.length) headerLines.forEach((l) => b.line(l));
   else {
-    if (settings.address) builder.text(`${settings.address}\n`);
-    if (settings.phone) builder.text(`Telp: ${settings.phone}\n`);
+    if (settings.address) b.line(settings.address);
+    if (settings.phone) b.line(`Telp: ${settings.phone}`);
   }
-  builder.align("left").text(`${sep}\n`);
-  builder.text(`Invoice: ${tx.invoice_no}\n`);
-  builder.text(`Tgl    : ${new Date(tx.created_at).toLocaleString("id-ID")}\n`);
-  builder.text(`Plg    : ${tx.customer_name}\n`);
-  if (tx.created_by_name) builder.text(`Kasir  : ${tx.created_by_name}\n`);
-  builder.text(`${sep}\n`);
-  tx.items.forEach((i) => {
-    builder.text(`${i.name}${i.unit ? ` (${i.unit})` : ""}\n`);
-    const line = padLine(`  ${i.quantity} x ${formatRupiah(i.price)}`, formatRupiah(i.price * i.quantity), cols);
-    builder.text(`${line}\n`);
-    if (i.discount) builder.text(padLine(`  Diskon`, `-${formatRupiah(i.discount)}`, cols) + "\n");
+  b.align("left").line(sep);
+  b.line(`Invoice: ${tx.invoice_no ?? "-"}`);
+  b.line(`Tgl    : ${new Date(tx.created_at).toLocaleString("id-ID")}`);
+  b.line(`Plg    : ${tx.customer_name ?? "Umum"}`);
+  if (tx.created_by_name) b.line(`Kasir  : ${tx.created_by_name}`);
+  b.line(sep);
+  (tx.items ?? []).forEach((i) => {
+    b.line(`${i.name}${i.unit ? ` (${i.unit})` : ""}`);
+    b.line(padLine(`  ${i.quantity} x ${formatRupiah(i.price)}`, formatRupiah(i.price * i.quantity), cols));
+    if (i.discount) b.line(padLine("  Diskon", `-${formatRupiah(i.discount)}`, cols));
   });
-  builder.text(`${sep}\n`);
-  if (tx.subtotal && tx.subtotal !== tx.total) builder.text(padLine("Subtotal", formatRupiah(tx.subtotal), cols) + "\n");
-  if (tx.global_discount) builder.text(padLine(`Diskon${tx.discount_percent ? ` ${tx.discount_percent}%` : ""}`, `-${formatRupiah(tx.global_discount)}`, cols) + "\n");
-  if (tx.tax_amount) builder.text(padLine(`${settings.tax_label || "Pajak"} ${tx.tax_percent}%`, formatRupiah(tx.tax_amount), cols) + "\n");
-  if (tx.shipping) builder.text(padLine("Ongkir", formatRupiah(tx.shipping), cols) + "\n");
-  builder.bold(true).size(2);
-  // size(2) doubles height; produce bigger total
-  builder.text(padLine("TOTAL", formatRupiah(tx.total), Math.max(16, Math.floor(cols / 2))) + "\n");
-  builder.size(1).bold(false);
-  builder.text(padLine("Metode", tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method, cols) + "\n");
-  if (tx.paid_amount) builder.text(padLine("Dibayar", formatRupiah(tx.paid_amount), cols) + "\n");
-  if (tx.outstanding) builder.text(padLine("Sisa Htg", formatRupiah(tx.outstanding), cols) + "\n");
+  b.line(sep);
+  if (tx.subtotal && tx.subtotal !== tx.total) b.line(padLine("Subtotal", formatRupiah(tx.subtotal), cols));
+  if (tx.global_discount) b.line(padLine(`Diskon${tx.discount_percent ? ` ${tx.discount_percent}%` : ""}`, `-${formatRupiah(tx.global_discount)}`, cols));
+  if (tx.tax_amount) b.line(padLine(`${settings.tax_label || "Pajak"} ${tx.tax_percent}%`, formatRupiah(tx.tax_amount), cols));
+  if (tx.shipping) b.line(padLine("Ongkir", formatRupiah(tx.shipping), cols));
+  b.bold(true).double(true).line(padLine("TOTAL", formatRupiah(tx.total), Math.max(14, Math.floor(cols / 2)))).double(false).bold(false);
+  b.line(padLine("Metode", tx.payment_method_label || PAYMENT_LABELS[tx.payment_method] || tx.payment_method || "-", cols));
+  if (tx.paid_amount) b.line(padLine("Dibayar", formatRupiah(tx.paid_amount), cols));
+  if ((tx.outstanding ?? 0) > 0) b.line(padLine("Sisa Htg", formatRupiah(tx.outstanding ?? 0), cols));
   const change = (tx.paid_amount ?? 0) - tx.total;
-  if (change > 0) builder.text(padLine("Kembalian", formatRupiah(change), cols) + "\n");
-  builder.text(`${sep}\n`);
+  if (change > 0) b.line(padLine("Kembalian", formatRupiah(change), cols));
+  b.line(sep);
   const footerLines = (settings.footer_lines ?? []).filter(Boolean).slice(0, 4);
   const effectiveFooter = footerLines.length ? footerLines : (settings.footer_note ? [settings.footer_note] : ["Terima kasih"]);
-  builder.align("center");
-  effectiveFooter.forEach((l) => builder.text(`${l}\n`));
-  builder.feed(3).cut();
+  b.align("center");
+  effectiveFooter.forEach((l) => b.line(l));
+  b.feed(3).cut();
 
-  const bytes = builder.bytes();
-  const res = await ThermalPrinter.printRaw(printer.address, bytes, {
-    paperWidthMm: widthMm,
-    timeout: 20000,
-    copies: Math.max(1, options.copies ?? 1),
-  });
-  if (!res.success) throw new Error(res.error?.message || "Gagal mencetak struk");
+  await sendBase64(b.base64(), options.copies ?? 1);
 }
 
-/** Buka cash drawer saja (tanpa cetak isi struk). */
 export async function openCashDrawerOnly(): Promise<void> {
-  const printer = await getPairedPrinter();
-  if (!printer) throw new Error("Belum ada printer terpasang.");
-  const { ThermalPrinter, ESCPOSBuilder } = await loadApi();
-  const bytes = new ESCPOSBuilder().init().cashDrawer().bytes();
-  const res = await ThermalPrinter.printRaw(printer.address, bytes, { timeout: 8000 });
-  if (!res.success) throw new Error(res.error?.message || "Gagal buka laci kas");
+  const b = new EscposBuilder();
+  b.init().cashDrawer().feed(1);
+  await sendBase64(b.base64());
+}
+
+/** Buka pengaturan Bluetooth Android (shortcut dari UI). */
+export async function openBluetoothSettings(): Promise<void> {
+  if (Platform.OS === "android") {
+    try { await Linking.sendIntent("android.settings.BLUETOOTH_SETTINGS"); }
+    catch { try { await Linking.openSettings(); } catch { /* ignore */ } }
+  }
 }

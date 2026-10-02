@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAppStyles } from "@/src/app-styles";
@@ -9,6 +9,7 @@ import {
   disconnectPrinter,
   getPairedPrinter,
   isPrinterAvailable,
+  openBluetoothSettings,
   type PairedPrinter,
   savePairedPrinter,
   scanPrinters,
@@ -96,9 +97,7 @@ export default function BluetoothPrinterScreen() {
     }
   };
 
-  const openSettings = () => {
-    if (Platform.OS === "android") Linking.openSettings();
-  };
+  const openSettings = () => { openBluetoothSettings().catch(() => undefined); };
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
@@ -166,11 +165,9 @@ export default function BluetoothPrinterScreen() {
           {scanning ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>{paired.length + found.length > 0 ? "Scan ulang" : "Scan printer Bluetooth"}</Text>}
         </Pressable>
 
-        {Platform.OS === "android" ? (
-          <Pressable testID="open-bt-settings" onPress={openSettings} style={[styles.outlineButton, { marginTop: 10 }]}>
-            <Text style={styles.outlineText}>Buka pengaturan Bluetooth Android</Text>
-          </Pressable>
-        ) : null}
+        <Pressable testID="open-bt-settings" onPress={openSettings} style={[styles.outlineButton, { marginTop: 10 }]}>
+          <Text style={styles.outlineText}>Buka pengaturan Bluetooth Android</Text>
+        </Pressable>
 
         {paired.length > 0 ? (
           <View style={styles.card} testID="paired-list">

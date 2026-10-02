@@ -57,8 +57,7 @@
       "expo-web-browser",
       "expo-status-bar",
       "expo-sqlite",
-      "expo-sharing",
-      "react-native-thermal-printer-driver"
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

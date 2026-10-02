@@ -138,23 +138,27 @@ frontend:
     implemented: true
     working: "NA"
     file: "/app/frontend/src/bt-printer.ts, /app/frontend/app/bluetooth-printer.tsx, /app/frontend/app/receipt.tsx, /app/frontend/app/settings.tsx, /app/frontend/app/(tabs)/lainnya.tsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
     needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
         comment: |
-          Replaced placeholder-only Bluetooth printer UI with real ESC/POS implementation using react-native-thermal-printer-driver@0.1.1 (TurboModule, New Architecture).
-          Added:
-            - /app/frontend/src/bt-printer.ts: scanPrinters/connect/testPrint/printReceipt/openCashDrawerOnly helpers with lazy dynamic import so web/Expo Go doesn't crash.
-            - /app/frontend/app/bluetooth-printer.tsx: new screen to scan, pair, test, and persist printer (SecureStore per-device).
-            - /app/frontend/app/receipt.tsx: real "Cetak struk sekarang" button that calls printReceipt with 58/80mm paper width, cash drawer toggle, and proper error handling.
-            - /app/frontend/app/settings.tsx: added "Buka laci kas otomatis" toggle + link to Printer Bluetooth screen.
-            - /app/frontend/app/(tabs)/lainnya.tsx: menu "Printer Bluetooth" now navigates to new screen.
-            - app.json: added react-native-thermal-printer-driver config plugin + Android permissions (BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION). iOS BT usage description already present.
-            - backend /integrations/status now reports bluetooth_printing.configured = true with instruction note.
-          NOTE: This feature CANNOT be validated via Expo Go or web preview — it requires an APK/IPA build. On web/Expo Go, UI shows clear "butuh build Android/iOS native" warning instead of crashing.
+          Attempt 1 (DEPRECATED): Used react-native-thermal-printer-driver@0.1.1 (TurboModule). Native build crashed on launch & on Laporan tab because the TurboModule failed to register properly on APK. 
+      - working: false
+        agent: "user"
+        comment: "APK showed 'JTPOIN POS terus berhenti' native crash when opening Laporan + printer unable to print."
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Switched library to `rn-bluetooth-classic-printer@0.2.1` (uses expo-modules-core, Expo-autolinked, OLD architecture compatible, Android Bluetooth Classic SPP only). This library is reliable because:
+            - Pattern follows standard Expo module registration (no fragile TurboModule init at launch).
+            - Lazy require() in bt-printer.ts so web/Expo Go never loads native code → zero crash in those environments.
+            - User wanted direct Bluetooth printing (no RawBT dependency); this library writes raw ESC/POS bytes directly to a paired Bluetooth printer via SPP.
+          bt-printer.ts now has: scanPrinters (paired + discovery), connectPrinter, savePairedPrinter (SecureStore), testPrint (greeting + cut), printReceipt (full tx struk 58/80mm, cash drawer), openCashDrawerOnly, openBluetoothSettings (Linking.sendIntent BLUETOOTH_SETTINGS).
+          Android runtime permissions handled with PermissionsAndroid.requestMultiple (BLUETOOTH_SCAN/CONNECT on API 31+, ACCESS_FINE_LOCATION on older). On NEVER_ASK_AGAIN → clear direction to open Settings.
+          User must rebuild APK to use new library (previous APK still contains the crashing TurboModule).
   - task: "Diskon per-item di kasir"
     implemented: true
     working: "NA"
