@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, Category, Product } from "@/src/api";
+import { apiRequest, BusinessSettings, Category, PriceLevel, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -36,9 +36,14 @@ export default function ProductFormScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryPicker, setCategoryPicker] = useState(false);
   const [newCategoryInput, setNewCategoryInput] = useState("");
+  const [priceLevels, setPriceLevels] = useState<PriceLevel[]>([]);
+  const [levelPrices, setLevelPrices] = useState<Record<string, string>>({});
 
   useEffect(() => {
     apiRequest<Category[]>("/categories").then(setCategories).catch(() => setCategories([]));
+    apiRequest<BusinessSettings>("/settings").then((s) => {
+      setPriceLevels((s.price_levels ?? []).filter((lv) => lv.id !== "default"));
+    }).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -54,6 +59,10 @@ export default function ProductFormScreen() {
         setProductType(match.product_type ?? "goods");
         setBaseUnit(match.base_unit ?? "Pcs");
         setUnits((match.units ?? []).map((u) => ({ name: u.name, factor: String(u.factor), price: u.price ? String(u.price) : "" })));
+        // Load existing level prices as strings
+        const lp: Record<string, string> = {};
+        Object.entries(match.prices ?? {}).forEach(([k, v]) => { if (k !== "default") lp[k] = String(v); });
+        setLevelPrices(lp);
       }
       setLoading(false);
     }).catch(() => setLoading(false));
@@ -81,12 +90,23 @@ export default function ProductFormScreen() {
           price: Number(String(u.price).replace(/\D/g, "")) || 0,
         }))
         .filter((u) => u.name && u.factor > 0);
+      const pricesDict: Record<string, number> = {};
+      if (usePriceLevels) {
+        priceLevels.forEach((lv) => {
+          const raw = levelPrices[lv.id];
+          if (raw !== undefined) {
+            const num = Number(String(raw).replace(/\D/g, ""));
+            if (num > 0) pricesDict[lv.id] = num;
+          }
+        });
+      }
       const body = JSON.stringify({
         name: name.trim(),
         product_type: productType,
         base_unit: baseUnit.trim() || "Pcs",
         units: normalizedUnits,
         price: Number(price.replace(/\D/g, "")),
+        prices: pricesDict,
         cost: Number(cost.replace(/\D/g, "")) || 0,
         stock: productType === "service" ? 0 : Number(stock.replace(/\D/g, "")) || 0,
         min_stock: Number(minStock.replace(/\D/g, "")) || 5,
@@ -203,6 +223,44 @@ export default function ProductFormScreen() {
           </View>
           <Switch testID="use-price-levels-switch" value={usePriceLevels} onValueChange={setUsePriceLevels} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} thumbColor={colors.onBrandPrimary} />
         </View>
+
+        {usePriceLevels ? (
+          <View style={[styles.card, { marginTop: 2 }]} testID="price-level-inputs">
+            <Text style={styles.cardTitle}>Harga per level</Text>
+            <Text style={[styles.muted, { marginBottom: 10 }]}>Isi harga untuk tiap level. Pelanggan dengan level tertentu akan otomatis dapat harga ini.</Text>
+            {priceLevels.length === 0 ? (
+              <View style={{ padding: 12, backgroundColor: colors.brandTertiary, borderRadius: 10, borderWidth: 1, borderColor: colors.warning }}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="information-circle-outline" size={18} color={colors.warning} />
+                  <Text style={[styles.productName, { marginLeft: 6, color: colors.warning }]}>Belum ada level harga</Text>
+                </View>
+                <Text style={[styles.muted, { marginTop: 6, lineHeight: 20 }]}>Tambah dulu level harga (misal: Grosir, Member, Reseller) di Lainnya → Pengaturan transaksi → bagian Level Harga, lalu kembali ke sini.</Text>
+                <Pressable
+                  testID="go-pricelevels"
+                  onPress={() => router.push("/transaction-settings")}
+                  style={[styles.outlineButton, { marginTop: 10 }]}
+                >
+                  <Text style={styles.outlineText}>Kelola Level Harga</Text>
+                </Pressable>
+              </View>
+            ) : (
+              priceLevels.map((lv) => (
+                <View key={lv.id} style={{ marginBottom: 8 }}>
+                  <Text style={styles.inputLabel}>{lv.name}</Text>
+                  <TextInput
+                    testID={`price-level-${lv.id}`}
+                    value={levelPrices[lv.id] ?? ""}
+                    onChangeText={(txt) => setLevelPrices((prev) => ({ ...prev, [lv.id]: txt.replace(/\D/g, "") }))}
+                    placeholder={`Harga ${lv.name.toLowerCase()}`}
+                    placeholderTextColor={colors.muted}
+                    keyboardType="number-pad"
+                    style={styles.input}
+                  />
+                </View>
+              ))
+            )}
+          </View>
+        ) : null}
         <Pressable testID="save-product-button" disabled={busy} onPress={save} style={[styles.primaryButton, busy && { opacity: 0.6 }]}>
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>{id ? "Simpan perubahan" : "Simpan produk"}</Text>}
         </Pressable>
