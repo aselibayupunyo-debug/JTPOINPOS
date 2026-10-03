@@ -22,14 +22,27 @@ const SECTIONS: Section[] = [
     title: "Memulai JTPOIN POS",
     short: "Pengaturan awal dalam 5 menit",
     body: [
-      { heading: "Langkah pertama", text: "Setelah daftar, lengkapi profil toko di menu Lainnya → Pengaturan toko & struk. Isi nama toko, alamat, nomor WhatsApp, dan upload logo (opsional)." },
-      { heading: "Tambah produk", text: "Buka tab Stok → tombol + untuk tambah produk. Isi nama, harga pokok, harga jual, dan stok. Untuk produk tanpa stok (jasa), pilih tipe Jasa." },
-      { heading: "Tambah metode pembayaran", text: "Lainnya → Metode pembayaran. Aktifkan Tunai, Kredit, QRIS, atau tambahkan metode kustom seperti Transfer BCA, OVO, GoPay." },
+      { heading: "Masuk pertama kali", text: "Login default: username `admin` password `admin`. Segera ganti password dari menu Lainnya → Profil & Password." },
+      { heading: "Password darurat", text: "Kalau lupa password, tekan \"Lupa password? Masuk darurat\" di layar login. Masukkan password darurat `kasirjtpoin` → langsung diarahkan ke pengaturan profil untuk set password baru tanpa perlu password lama." },
+      { heading: "Lengkapi profil toko", text: "Lainnya → Pengaturan toko & struk. Isi nama toko, alamat, telepon, upload logo (persegi/persegi panjang) — logo otomatis dicetak di struk thermal." },
+      { heading: "Tambah produk", text: "Tab Stok → tombol +. Isi nama, harga pokok, harga jual, dan stok. Untuk produk jasa (tanpa stok), pilih tipe Jasa." },
+      { heading: "Atur metode pembayaran", text: "Lainnya → Metode pembayaran. Aktifkan Tunai, Kredit, QRIS statis, atau tambah kustom (Transfer BCA, OVO, GoPay, dll). Metode yang dipilih di sini otomatis muncul di Kasir, Pembelian, dan Transaksi Biaya." },
       { bullets: [
-        "💡 Tips: Scan barcode produk dengan tombol kamera di tab Kasir.",
-        "💡 Tips: Gunakan Kategori untuk kelompokkan produk (minuman, snack, dll).",
-        "💡 Tips: Set stok minimum agar dapat peringatan saat stok menipis.",
+        "💡 Scan barcode produk dengan tombol kamera di tab Kasir.",
+        "💡 Pakai Kategori untuk kelompokkan produk (minuman, snack, dll).",
+        "💡 Set stok minimum agar dapat peringatan \"Menipis\" dan \"Habis\".",
       ] },
+    ],
+  },
+  {
+    id: "offline-aman",
+    icon: "shield-checkmark-outline",
+    title: "Data 100% di Perangkat",
+    short: "Tidak butuh internet, tanpa server",
+    body: [
+      { heading: "Full offline", text: "Semua data (produk, transaksi, pelanggan, laporan, pengaturan) tersimpan di SQLite lokal di HP Anda. Tidak ada server, tidak ada koneksi keluar — aman walau sinyal mati total." },
+      { heading: "Backup rutin itu wajib", text: "Karena data cuma di 1 HP, pastikan rutin backup. Lainnya → Backup & Restore (ZIP) → Ekspor backup ZIP → simpan di WhatsApp sendiri, email, Google Drive, atau flashdisk." },
+      { heading: "Pindah HP / ganti device", text: "Pulihkan dari file ZIP backup di menu yang sama → Pulihkan dari ZIP. Semua data langsung masuk ke HP baru." },
     ],
   },
   {
@@ -39,109 +52,137 @@ const SECTIONS: Section[] = [
     short: "Cara melakukan penjualan harian",
     body: [
       { heading: "Transaksi dasar", text: "1) Ketuk produk atau cari dengan search / scan barcode. 2) Atur qty di keranjang. 3) Tekan Bayar → pilih metode pembayaran → selesai." },
-      { heading: "Multi-unit", text: "Jika produk punya satuan tambahan (misal Pcs & Dus), modal pilihan satuan akan muncul saat ditambah ke keranjang. Pilih satuan yang dijual." },
-      { heading: "Diskon per-item", text: "Di layar Pembayaran, ketuk tombol '+ Tambah diskon' di bawah tiap item untuk diskon per baris (nominal Rp atau persen %)." },
-      { heading: "Diskon global, pajak, ongkir", text: "Di layar Pembayaran, isi field Diskon %, Diskon Rp, Pajak %, dan Ongkir sesuai kebutuhan. Pajak dihitung setelah diskon." },
-      { heading: "Harga manual", text: "Ketuk harga item di layar Pembayaran untuk mengubah harga manual (jika diizinkan di Pengaturan)." },
-      { heading: "Parkir / Antrian", text: "Jika pelanggan belum siap bayar, tekan Park / Antri. Simpan dengan nama pelanggan, lalu buka lagi dari ikon lapis di pojok kanan atas." },
-      { heading: "Kredit", text: "Pilih metode Kredit untuk mencatat utang pelanggan. Wajib isi nama pelanggan. Catat pelunasan dari menu Hutang & Piutang." },
+      { heading: "Kuantitas desimal", text: "Ketuk angka qty untuk input manual. Dukung sampai 2 angka desimal (contoh: 1.75, 0.5) — cocok untuk produk per gram / per liter." },
+      { heading: "Ubah harga manual", text: "Ketuk angka harga item di layar Pembayaran untuk ubah manual tanpa setting apapun." },
+      { heading: "Multi-unit", text: "Jika produk punya satuan tambahan (misal Pcs & Dus), modal pilihan satuan muncul saat ditambah ke keranjang." },
+      { heading: "Diskon per item + global", text: "Di layar Pembayaran: tombol \"+ Tambah diskon\" di bawah tiap item untuk diskon per baris (nominal Rp atau persen %). Diskon global, pajak, dan ongkir juga tersedia di bagian bawah." },
+      { heading: "Preview struk sebelum simpan", text: "Opsional. Aktifkan \"Perbolehkan cetak struk sebelum selesaikan transaksi\" di Pengaturan Transaksi. Jika aktif, tombol \"Cetak struk sekarang\" muncul di layar Pembayaran — struk preview bertuliskan **BELUM DIBAYAR** otomatis dicetak ke printer Bluetooth." },
+      { heading: "Parkir / Antrian", text: "Jika pelanggan belum siap bayar, tekan Park. Buka lagi dari ikon lapis di pojok kanan atas — ada kotak pencarian antrian." },
+      { heading: "Kredit", text: "Pilih metode Kredit untuk catat utang pelanggan. Wajib isi nama pelanggan. Catat pelunasan dari Lainnya → Hutang & Piutang." },
     ],
   },
   {
     id: "stok",
     icon: "cube-outline",
-    title: "Mengelola Stok & Produk",
-    short: "Tambah, impor, dan tracking stok",
+    title: "Kelola Stok & Produk",
+    short: "Tambah, impor, dan atur stok",
     body: [
-      { heading: "Edit produk", text: "Tab Stok → ketuk produk → edit. Bisa ubah harga, stok, barcode, SKU, kategori, dan satuan tambahan." },
-      { heading: "Multi-level harga", text: "Produk bisa punya harga grosir / member / reseller. Set di edit produk → Harga per level. Terapkan ke pelanggan tertentu agar otomatis." },
-      { heading: "Import massal", text: "Tab Stok → ikon upload. Siapkan file CSV/XLSX dengan kolom Nama, SKU, Barcode, Kategori, Harga Pokok, Harga Jual, Stok." },
-      { heading: "Export Excel", text: "Tab Stok → ikon download. Hasilnya file .xlsx siap dibagikan via WhatsApp / email." },
-      { heading: "Barcode sticker", text: "Lainnya → Cetak barcode label untuk cetak stiker barcode produk ke printer thermal / A4." },
-      { heading: "Pembelian & stok masuk", text: "Lainnya → Pembelian baru untuk catat barang masuk dari supplier. Stok otomatis bertambah." },
+      { heading: "Edit cepat lewat tap", text: "Tab Stok → ketuk produk → muncul menu bawah: **Tambah Stok**, **Kurangi Stok**, atau Edit Produk. Setiap penyesuaian otomatis tercatat di Laporan Tracking Stok." },
+      { heading: "Multi-level harga", text: "Produk bisa punya harga standar / grosir / member. Aktifkan toggle \"Level harga\" di form produk, lalu isi harga tiap level. Pengaturan level ada di Pengaturan Transaksi." },
+      { heading: "Import CSV", text: "Tab Stok → Import. Siapkan file .CSV (dari Excel: Save As → CSV) dengan header: `name, sku, barcode, category, price, cost, stock, min_stock, base_unit, product_type`. Baris dengan SKU/barcode yang sama akan di-update, baris baru ditambahkan." },
+      { heading: "Export CSV", text: "Tab Stok → Export. Hasilnya .csv siap dibagikan via WhatsApp / email / drive." },
+      { heading: "Pembelian & stok masuk", text: "Lainnya → Pembelian baru. Catat barang dari supplier, pilih metode pembayaran (ikut setting), stok otomatis bertambah. Jika Kredit, otomatis masuk ke daftar Hutang." },
+      { heading: "Cetak barcode label", text: "Lainnya → Cetak barcode label. Pilih produk → kartu Contoh label menampilkan preview seperti di kertas thermal → tombol Cetak langsung ke printer Bluetooth yang paired. Fallback ke PDF kalau printer belum terhubung." },
+    ],
+  },
+  {
+    id: "retur",
+    icon: "return-up-back-outline",
+    title: "Retur Berbasis Stok",
+    short: "Retur jual / beli tanpa cari transaksi",
+    body: [
+      { heading: "Alur retur", text: "Lainnya → Retur transaksi → pilih tab Retur Penjualan atau Retur Pembelian → cari & tap produk yang dikembalikan → atur qty + harga → tombol Lanjut retur → konfirmasi **\"Apakah anda yakin??\"**." },
+      { heading: "Stok otomatis bergerak", text: "Retur Penjualan menambah stok, Retur Pembelian mengurangi stok. Terekam di Laporan Tracking Stok sebagai jenis \"Retur Jual\" / \"Retur Beli\"." },
+    ],
+  },
+  {
+    id: "biaya",
+    icon: "cash-outline",
+    title: "Transaksi Biaya",
+    short: "Catat pengeluaran operasional",
+    body: [
+      { heading: "Catat biaya", text: "Lainnya → Transaksi biaya → tombol +. Pilih pos biaya (12 default: Gaji, Listrik, Air, Internet, Sewa, Transportasi, dll) atau tambah pos baru. Isi jumlah + keterangan + metode pembayaran." },
+      { heading: "Dampak ke kas", text: "Jika metode pembayaran = Tunai, saldo kas otomatis berkurang dan tercatat sebagai pengeluaran kas." },
+      { heading: "Laporan Biaya", text: "Lainnya → Laporan biaya. Rekap per pos biaya + daftar transaksi + bagikan PDF / Excel/CSV." },
+    ],
+  },
+  {
+    id: "pelanggan-poin",
+    icon: "people-outline",
+    title: "Pelanggan & Sistem Poin",
+    short: "Database pelanggan + poin otomatis",
+    body: [
+      { heading: "Database pelanggan", text: "Lainnya → Pelanggan. Simpan nama, telepon/WA, alamat. Kotak pencarian aktif untuk cari cepat." },
+      { heading: "Jumlah transaksi otomatis", text: "Tiap pelanggan menampilkan total transaksi, total belanja, dan sisa piutang berjalan — di-hitung real-time dari database." },
+      { heading: "Poin loyalty", text: "**1 poin setiap Rp 1.000 pembelanjaan.** Poin terkumpul otomatis dari transaksi penjualan dengan pelanggan terdaftar. Ditampilkan di kartu pelanggan dengan ikon bintang." },
     ],
   },
   {
     id: "laporan",
     icon: "stats-chart-outline",
-    title: "Laporan Bisnis",
-    short: "Pantau omzet, laba, dan performa",
+    title: "Laporan Bisnis Lengkap",
+    short: "Omzet, laba rugi, pajak, tracking stok",
     body: [
-      { heading: "Pilih periode", text: "Tab Laporan → pilih Hari ini, Bulan ini, Tahun ini, atau Custom periode untuk rentang bebas." },
-      { heading: "6 Jenis laporan", bullets: [
-        "Ringkasan: metrik utama (penjualan, laba, piutang, kas).",
+      { heading: "Laporan standar (tab Laporan)", bullets: [
+        "Ringkasan: metrik utama (penjualan, laba, piutang, kas, barang menipis).",
         "Per Produk: produk terlaris & laba per produk.",
         "Per Pelanggan: pelanggan teraktif & total belanja.",
         "Per Operator: performa tiap kasir.",
         "Detail Barang: list seluruh barang terjual + invoice.",
-        "Detail Transaksi: list transaksi lengkap dengan tombol kirim PDF / WA / Email.",
+        "Detail Transaksi: list transaksi + bagikan PDF / WA.",
       ] },
-      { heading: "Export", text: "Tombol 'Kirim laporan sebagai PDF' untuk PDF A4, atau 'Export Excel' untuk file .xlsx multi-sheet (siap dibuka di Microsoft Excel / Google Sheets)." },
+      { heading: "Laporan Laba Rugi", text: "Lainnya → Laporan laba rugi. Penjualan - Retur - HPP = Laba Kotor; dikurangi Biaya = **Laba Bersih** + margin %. Export PDF / Excel/CSV." },
+      { heading: "Laporan Biaya", text: "Lainnya → Laporan biaya. Rekap per pos biaya + detail transaksi." },
+      { heading: "Rekap Pajak", text: "Lainnya → Rekap pajak. DPP + PPN Keluaran (jual), DPP + PPN Masukan (beli), Pajak Netto Terhutang. Aktifkan pajak default di Pengaturan Transaksi dulu." },
+      { heading: "Tracking Stok", text: "Lainnya → Laporan tracking stok. Timeline pergerakan stok (jual, beli, retur, penyesuaian) per periode + total masuk / keluar / netto." },
+      { heading: "Rentang waktu bebas", text: "Hampir semua laporan dukung Hari ini, Bulan ini, Tahun ini, atau Custom periode (atur tanggal mulai & akhir)." },
     ],
   },
   {
     id: "arus-kas",
     icon: "wallet-outline",
-    title: "Arus Kas & Hutang",
-    short: "Catat kas keluar dan tagih utang",
+    title: "Arus Kas, Shift, Hutang-Piutang",
+    short: "Pengelolaan kas & utang",
     body: [
-      { heading: "Catat kas masuk/keluar", text: "Lainnya → Arus kas → + untuk tambah pemasukan/pengeluaran non-penjualan (misal: beli ATK, bayar listrik, modal masuk)." },
-      { heading: "Lunasi piutang", text: "Lainnya → Hutang & Piutang → tab Piutang → ketuk pelanggan → Lunasi atau Bayar sebagian. Bisa pilih metode pembayaran kustom." },
-      { heading: "Shift kasir", text: "Lainnya → Shift kasir → Buka shift (isi modal awal) → setelah selesai shift → Tutup shift (isi kas akhir). Sistem hitung selisih otomatis." },
+      { heading: "Catat kas masuk/keluar", text: "Lainnya → Arus kas → + untuk pemasukan/pengeluaran non-penjualan (modal masuk, prive, dll)." },
+      { heading: "Hutang & Piutang", text: "Lainnya → Hutang & Piutang → tab Piutang (dari pelanggan) atau Hutang (ke supplier) → ketuk transaksi → bayar sebagian / lunas. Metode pembayaran bisa pilih dari daftar." },
+      { heading: "Shift kasir", text: "Lainnya → Shift kasir → Buka shift (isi modal awal) → setelah selesai → Tutup shift (isi kas akhir). Sistem hitung selisih kas otomatis per shift." },
     ],
   },
   {
     id: "struk",
     icon: "receipt-outline",
-    title: "Struk & Invoice",
-    short: "Cetak struk & kirim invoice digital",
+    title: "Struk & Printer Bluetooth",
+    short: "Cetak thermal + kirim invoice digital",
     body: [
-      { heading: "Preview struk", text: "Di layar Pembayaran, tekan 'Preview / Cetak Struk' sebelum selesaikan untuk preview printer thermal 58mm." },
-      { heading: "Kirim ulang struk", text: "Lainnya → Riwayat transaksi → ketuk transaksi → tombol Cetak / Bagikan / Kirim WA." },
-      { heading: "Invoice PDF A5", text: "Dari Riwayat / Laporan Detail Transaksi, tekan Bagikan PDF untuk invoice format A5 (bisa dicetak atau dikirim via email/WA)." },
-      { heading: "Receipt gambar JPEG", text: "Alternatif selain PDF, struk bisa dibagikan sebagai gambar JPEG dari layar Riwayat." },
-      { heading: "Printer Bluetooth", text: "Fitur ESC/POS 58mm/80mm sekarang aktif! Buka Lainnya → Printer Bluetooth → Scan → pilih printer → Cetak uji. Setelah tersimpan, tombol 'Cetak thermal' muncul otomatis di layar struk & riwayat.\n\n⚠️ Hanya berjalan di APK Android native (tidak di Expo Go/web). Jika pakai Expo Go, akan muncul peringatan 'butuh build'." },
-    ],
-  },
-  {
-    id: "offline",
-    icon: "cloud-offline-outline",
-    title: "Mode Offline",
-    short: "JTPOIN POS tetap jalan tanpa internet",
-    body: [
-      { heading: "Offline-first", text: "Semua data penting (produk, pelanggan, transaksi) di-cache lokal di perangkat Anda. Anda bisa melakukan transaksi tanpa internet." },
-      { heading: "Antrian sinkron", text: "Transaksi yang dibuat offline akan masuk antrian lokal (ikon awan di banner atas). Begitu online, data otomatis dikirim ke server." },
-      { heading: "Konflik data", text: "Jika ada konflik (misal stok minus), notifikasi muncul. Buka Pengaturan → Antrian sinkron untuk resolusi manual." },
+      { heading: "Pair printer Bluetooth", text: "Lainnya → Printer Bluetooth → Scan → pilih printer thermal (58mm / 80mm) → Cetak uji. Printer tersimpan permanen." },
+      { heading: "Cetak struk saat transaksi", text: "Setelah bayar, struk otomatis dicetak ke printer paired. Logo (format persegi/persegi panjang) ikut tercetak di atas struk." },
+      { heading: "Preview sebelum simpan (opsional)", text: "Aktifkan toggle di Pengaturan Transaksi: \"Perbolehkan cetak struk sebelum selesaikan transaksi\". Struk preview tertulis **BELUM DIBAYAR**." },
+      { heading: "Cetak ulang struk / invoice", text: "Lainnya → Riwayat transaksi → ketuk transaksi → tombol Cetak thermal / Bagikan PDF / Kirim WA. Invoice format A5 bisa dicetak atau dikirim via email/WA." },
+      { heading: "Multi-printer dapur", text: "Jika aktif di Pengaturan Transaksi, order dengan produk ber-flag \"Cetak di dapur\" otomatis diteruskan ke printer dapur terpisah." },
+      { heading: "⚠️ Butuh build native", text: "Printer Bluetooth hanya aktif di APK/AAB Android native, **tidak di preview web / Expo Go**. Setelah selesai setting, deploy & generate build dari panel Publish." },
     ],
   },
   {
     id: "operator",
-    icon: "people-outline",
+    icon: "person-add-outline",
     title: "Operator & Keamanan",
-    short: "Tim kasir, hak akses, audit",
+    short: "Tim kasir, hak akses, admin",
     body: [
-      { heading: "Tambah operator", text: "Lainnya → Operator & kewenangan → +. Isi nama, username, password, pilih peran (Manager/Kasir/Dapur) dan centang kewenangan." },
-      { heading: "Peran & kewenangan", bullets: [
-        "Owner: akses penuh (hanya 1 akun).",
+      { heading: "Tambah operator", text: "Lainnya → Operator & kewenangan → +. Isi nama, username, password, pilih peran dan centang kewenangan modul." },
+      { heading: "Peran default", bullets: [
+        "Owner: akses penuh (akun admin).",
         "Manager: akses hampir semua kecuali kelola operator & zona bahaya.",
-        "Kasir: hanya penjualan & lihat laporan terbatas.",
+        "Kasir: fokus penjualan + laporan terbatas.",
         "Dapur: hanya lihat order (kitchen display).",
       ] },
-      { heading: "Zona berbahaya (owner)", text: "Reset transaksi, hapus produk, dan audit log hanya untuk Owner. Semua aksi dilindungi password dan tercatat di Log Audit." },
-      { heading: "Backup & Restore", text: "Lainnya → Backup & Restore (ZIP). Download file ZIP berisi semua data bisnis. Restore via file yang sama saat butuh pindah device." },
+      { heading: "Zona berbahaya (owner)", text: "Reset transaksi, hapus semua produk, dan audit log hanya untuk Owner. Dilindungi password admin dan tercatat di Log Audit." },
+      { heading: "Backup & Restore ZIP", text: "Lainnya → Backup & Restore (ZIP). Ekspor file ZIP berisi seluruh data. Restore via file yang sama saat pindah device." },
+      { heading: "Autofill Google dinonaktifkan", text: "Form login & password sudah dikonfigurasi agar tidak muncul tawaran \"Save password\" dari Google Password Manager." },
     ],
   },
   {
     id: "faq",
     icon: "help-circle-outline",
-    title: "FAQ & Tips Lanjutan",
+    title: "FAQ & Troubleshoot",
     short: "Jawaban pertanyaan umum",
     body: [
-      { heading: "Kenapa stok minus?", text: "Biasanya karena offline sync membentur konflik. Buka Pengaturan → Antrian sinkron → resolve." },
-      { heading: "Lupa password owner?", text: "Dari layar login, tekan 'Reset password'. Verifikasi email yang terdaftar." },
-      { heading: "Cara ganti logo struk?", text: "Lainnya → Pengaturan toko & struk → upload Logo. Rekomendasi 300×300px PNG transparan." },
-      { heading: "Printer thermal tidak terdeteksi?", text: "1) Pastikan pakai APK Android (bukan Expo Go). 2) Nyalakan Bluetooth HP + izin lokasi. 3) Pair printer dulu di Pengaturan Android (PIN umum: 0000 / 1234). 4) Buka Lainnya → Printer Bluetooth → Scan. 5) Pilih printer dari list → Cetak uji." },
-      { heading: "Share receipt gagal?", text: "Pastikan WhatsApp sudah terinstall. Format receipt: pilih PDF atau JPEG di menu riwayat." },
+      { heading: "Lupa password owner?", text: "Dari layar login tekan \"Lupa password? Masuk darurat\". Password darurat `kasirjtpoin` → otomatis masuk & diarahkan ke pengaturan untuk set password baru." },
+      { heading: "Kenapa harus backup?", text: "Semua data cuma di 1 HP (tidak di server). Kehilangan/kerusakan HP = data hilang. Rutin ekspor ZIP ke tempat aman (WA sendiri, email, Google Drive)." },
+      { heading: "Printer thermal tidak terdeteksi?", text: "1) Pakai APK Android native (bukan Expo Go). 2) Nyalakan Bluetooth HP + izin lokasi. 3) Pair printer dulu di Pengaturan Bluetooth Android (PIN umum: 0000 / 1234). 4) Buka Lainnya → Printer Bluetooth → Scan → pilih printer → Cetak uji." },
+      { heading: "Ganti logo struk?", text: "Lainnya → Pengaturan toko & struk → upload Logo. Format bebas (persegi/persegi panjang). Rekomendasi: PNG background putih, lebar ≥ 300px." },
+      { heading: "Share receipt / invoice gagal?", text: "Pastikan WhatsApp / email terinstall. Share PDF untuk invoice, JPEG untuk struk gambar." },
+      { heading: "Reset ulang total?", text: "Lainnya → Zona berbahaya → \"Reset Semua Transaksi\" atau \"Hapus Semua Produk\" (butuh password admin). Backup dulu sebelum reset!" },
     ],
   },
 ];
@@ -166,9 +207,9 @@ export default function ManualScreen() {
         </View>
 
         <View style={styles.greenCard}>
-          <Text style={styles.white}>Butuh bantuan cepat?</Text>
-          <Text style={styles.bigWhite}>Panduan lengkap tersedia offline</Text>
-          <Text style={[styles.white, { opacity: 0.8, marginTop: 6 }]}>Ketuk tiap bagian untuk membuka detail. Semua panduan ini tersimpan di aplikasi.</Text>
+          <Text style={styles.white}>Semua di satu tempat</Text>
+          <Text style={styles.bigWhite}>Panduan lengkap · siap offline</Text>
+          <Text style={[styles.white, { opacity: 0.9, marginTop: 6 }]}>Ketuk tiap bagian untuk membuka detail. Panduan tersimpan di aplikasi, tidak butuh internet.</Text>
         </View>
 
         {SECTIONS.map((s) => {
@@ -224,11 +265,11 @@ export default function ManualScreen() {
             <Text style={[styles.productName, { marginLeft: 8, color: colors.brandPrimary }]}>Fitur yang butuh native build</Text>
           </View>
           <Text style={[styles.muted, { marginTop: 6, lineHeight: 20 }]}>
-            Beberapa fitur hardware (Bluetooth printer, cash drawer, barcode scanner USB) hanya aktif di APK Android native, bukan Expo Go. Setelah selesai setting, klik tombol Publish di aplikasi untuk generate APK.
+            Beberapa fitur hardware (printer Bluetooth, cash drawer, barcode scanner USB) hanya aktif di APK/AAB Android native, bukan preview web / Expo Go. Setelah selesai setting, klik Publish untuk generate build.
           </Text>
         </View>
 
-        <Text style={[styles.muted, { textAlign: "center", marginTop: 24 }]}>JTPOIN POS · Panduan versi 1.0</Text>
+        <Text style={[styles.muted, { textAlign: "center", marginTop: 24 }]}>JTPOIN POS · Panduan versi 2.0 · Offline Edition</Text>
       </ScrollView>
     </View>
   );

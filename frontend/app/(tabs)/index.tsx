@@ -868,10 +868,11 @@ function CheckoutSheet({
                 <Text style={styles.dangerText}>Batal</Text>
               </Pressable>
             </View>
-            <Pressable
-              testID="preview-print-receipt"
-              disabled={busy}
-              onPress={async () => {
+            {(settings?.allow_preview_print ?? true) ? (
+              <Pressable
+                testID="preview-print-receipt"
+                disabled={busy}
+                onPress={async () => {
                 try {
                   if (Platform.OS === "web") {
                     toast.error("Preview struk hanya di aplikasi mobile", "Buka di Expo Go / build Android untuk mencetak.");
@@ -971,6 +972,7 @@ function CheckoutSheet({
             >
               <Text style={styles.outlineText}>Cetak struk sekarang</Text>
             </Pressable>
+            ) : null}
             <Pressable
               testID="confirm-pay"
               disabled={busy || insufficient || !method || (kind === "credit" && !customerName.trim())}

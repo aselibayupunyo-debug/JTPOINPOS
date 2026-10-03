@@ -200,6 +200,7 @@ export type BusinessSettings = {
   tax_label?: string;
   shipping_default?: number;
   allow_price_edit?: boolean;
+  allow_preview_print?: boolean;
   auto_park_on_cancel?: boolean;
   confirm_cancel?: boolean;
   price_levels?: PriceLevel[];

@@ -56,6 +56,7 @@ export default function TransactionSettingsScreen() {
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Perilaku kasir</Text>
+          <ToggleRow label="Perbolehkan cetak struk sebelum selesaikan transaksi" value={!!s.allow_preview_print} onChange={(v) => setS({ ...s, allow_preview_print: v })} />
           <ToggleRow label="Konfirmasi sebelum batal transaksi" value={!!s.confirm_cancel} onChange={(v) => setS({ ...s, confirm_cancel: v })} />
           <ToggleRow label="Park otomatis saat tombol batal (bukan hapus)" value={!!s.auto_park_on_cancel} onChange={(v) => setS({ ...s, auto_park_on_cancel: v })} />
         </View>

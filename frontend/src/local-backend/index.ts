@@ -264,6 +264,7 @@ export async function initLocalBackend(): Promise<void> {
     tax_label: "Pajak",
     shipping_default: 0,
     allow_price_edit: true,
+    allow_preview_print: true,
     auto_park_on_cancel: false,
     confirm_cancel: true,
     price_levels: [{ id: "default", name: "Standar" }],
