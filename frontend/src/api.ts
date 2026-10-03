@@ -139,6 +139,7 @@ export type Contact = {
   transaction_count?: number;
   total_spent?: number;
   outstanding?: number;
+  points?: number;
 };
 
 export type ReportSummary = {
@@ -307,8 +308,95 @@ export async function clearToken() { return storage.secureRemove(TOKEN_KEY); }
 // Import/Export Excel — perlu diproses secara lokal.
 // ---------------------------------------------------------------------------
 
-export async function uploadProducts(_file: { uri: string; name: string; mimeType?: string | null }): Promise<{ imported: number }> {
-  throw new OfflineError("Import produk via Excel sedang dinonaktifkan di mode offline. Tambah produk manual lewat menu Stok.");
+export async function uploadProducts(file: { uri: string; name: string; mimeType?: string | null }): Promise<{ imported: number; created?: number; updated?: number }> {
+  // Baca file CSV secara lokal lalu kirim rows ke local-backend.
+  // Note: hanya CSV yang didukung di mode offline (XLSX butuh library tambahan).
+  const FileSystem = await import("expo-file-system/legacy");
+  let text: string;
+  try {
+    text = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.UTF8 });
+  } catch (e) {
+    throw new Error(`Gagal membaca file: ${e instanceof Error ? e.message : "format tidak didukung"}`);
+  }
+  const rows = parseCsv(text);
+  if (!rows.length) throw new Error("CSV kosong atau header tidak ditemukan");
+  return apiRequest<{ imported: number; created: number; updated: number }>("/products/import", {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+}
+
+/**
+ * Parser CSV sederhana. Mendukung:
+ *  - Pemisah koma / titik koma (auto-detect)
+ *  - Nilai dalam kutip ganda, escape "" di dalam kutip
+ *  - Header baris pertama (lower-case) jadi key
+ *  - Trim whitespace
+ */
+function parseCsv(text: string): Record<string, string>[] {
+  // Strip BOM
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const lines = splitCsvLines(text);
+  if (lines.length < 2) return [];
+  const firstLine = lines[0];
+  // Deteksi pemisah: pakai yang paling banyak muncul di baris pertama (di luar kutip)
+  const commaCount = countOutsideQuotes(firstLine, ",");
+  const semiCount = countOutsideQuotes(firstLine, ";");
+  const sep = semiCount > commaCount ? ";" : ",";
+  const header = parseCsvLine(firstLine, sep).map((h) => h.trim().toLowerCase());
+  const out: Record<string, string>[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const cells = parseCsvLine(line, sep);
+    const row: Record<string, string> = {};
+    for (let j = 0; j < header.length; j++) {
+      row[header[j]] = (cells[j] ?? "").trim();
+    }
+    out.push(row);
+  }
+  return out;
+}
+function splitCsvLines(text: string): string[] {
+  const out: string[] = [];
+  let buf = "";
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { inQuote = !inQuote; buf += c; continue; }
+    if (!inQuote && (c === "\n" || c === "\r")) {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      out.push(buf); buf = ""; continue;
+    }
+    buf += c;
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+function parseCsvLine(line: string, sep: string): string[] {
+  const out: string[] = [];
+  let buf = "";
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQuote && line[i + 1] === '"') { buf += '"'; i++; continue; }
+      inQuote = !inQuote; continue;
+    }
+    if (!inQuote && c === sep) { out.push(buf); buf = ""; continue; }
+    buf += c;
+  }
+  out.push(buf);
+  return out;
+}
+function countOutsideQuotes(s: string, needle: string): number {
+  let inQuote = false; let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"') { inQuote = !inQuote; continue; }
+    if (!inQuote && c === needle) n++;
+  }
+  return n;
 }
 
 export async function downloadProductsExcel(): Promise<{ base64: string; filename: string }> {

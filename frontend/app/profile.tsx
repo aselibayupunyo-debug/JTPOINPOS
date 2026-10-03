@@ -81,9 +81,9 @@ export default function ProfileScreen() {
           <Text style={styles.cardTitle}>Akun pemilik</Text>
           <Text style={[styles.muted, { marginTop: 4 }]}>{user?.business_name}</Text>
           <Text style={styles.inputLabel}>Nama tampilan</Text>
-          <TextInput testID="profile-name" value={name} onChangeText={setName} style={styles.input} placeholder="Nama lengkap" placeholderTextColor={colors.muted} />
+          <TextInput testID="profile-name" value={name} onChangeText={setName} style={styles.input} placeholder="Nama lengkap" placeholderTextColor={colors.muted} autoComplete="off" autoCorrect={false} textContentType="none" importantForAutofill="no" />
           <Text style={styles.inputLabel}>Username / login</Text>
-          <TextInput testID="profile-username" value={username} onChangeText={setUsername} autoCapitalize="none" style={styles.input} placeholder="Minimal 3 karakter, tanpa spasi" placeholderTextColor={colors.muted} />
+          <TextInput testID="profile-username" value={username} onChangeText={setUsername} autoCapitalize="none" style={styles.input} placeholder="Minimal 3 karakter, tanpa spasi" placeholderTextColor={colors.muted} autoComplete="off" autoCorrect={false} textContentType="none" importantForAutofill="no" />
           <Text style={styles.muted}>{emergency ? "Dipakai saat login." : "Dipakai saat login. Ubah dengan password admin."}</Text>
         </View>
         <View style={styles.card}>
@@ -94,13 +94,13 @@ export default function ProfileScreen() {
           {emergency ? null : (
             <>
               <Text style={styles.inputLabel}>Password saat ini</Text>
-              <TextInput testID="profile-current-pwd" value={currentPwd} onChangeText={setCurrentPwd} secureTextEntry style={styles.input} placeholder="Verifikasi perubahan" placeholderTextColor={colors.muted} />
+              <TextInput testID="profile-current-pwd" value={currentPwd} onChangeText={setCurrentPwd} secureTextEntry style={styles.input} placeholder="Verifikasi perubahan" placeholderTextColor={colors.muted} autoComplete="off" autoCorrect={false} textContentType="none" importantForAutofill="no" />
             </>
           )}
           <Text style={styles.inputLabel}>Password baru</Text>
-          <TextInput testID="profile-new-pwd" value={newPwd} onChangeText={setNewPwd} secureTextEntry style={styles.input} placeholder="Minimal 6 karakter" placeholderTextColor={colors.muted} />
+          <TextInput testID="profile-new-pwd" value={newPwd} onChangeText={setNewPwd} secureTextEntry style={styles.input} placeholder="Minimal 6 karakter" placeholderTextColor={colors.muted} autoComplete="off" autoCorrect={false} textContentType="none" importantForAutofill="no" />
           <Text style={styles.inputLabel}>Konfirmasi password baru</Text>
-          <TextInput testID="profile-confirm-pwd" value={confirmPwd} onChangeText={setConfirmPwd} secureTextEntry style={styles.input} placeholder="Ulangi password baru" placeholderTextColor={colors.muted} />
+          <TextInput testID="profile-confirm-pwd" value={confirmPwd} onChangeText={setConfirmPwd} secureTextEntry style={styles.input} placeholder="Ulangi password baru" placeholderTextColor={colors.muted} autoComplete="off" autoCorrect={false} textContentType="none" importantForAutofill="no" />
         </View>
         <Pressable testID="save-profile" disabled={busy} onPress={save} style={[styles.primaryButton, busy && { opacity: 0.5 }]}>
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Simpan perubahan</Text>}

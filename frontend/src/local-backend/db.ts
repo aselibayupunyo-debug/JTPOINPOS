@@ -123,6 +123,27 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL,
   PRIMARY KEY (business_id, name)
 );
+CREATE TABLE IF NOT EXISTS stock_adjustments (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stockadj_biz ON stock_adjustments(business_id);
+CREATE INDEX IF NOT EXISTS idx_stockadj_prod ON stock_adjustments(product_id);
+CREATE TABLE IF NOT EXISTS expenses (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_expense_biz ON expenses(business_id);
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  json TEXT NOT NULL
+);
 `;
 
 export async function getDb(): Promise<Database> {

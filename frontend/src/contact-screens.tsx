@@ -75,6 +75,12 @@ export function ContactListScreen({ kind }: { kind: "customers" | "suppliers" })
               <View style={{ alignItems: "flex-end" }}>
                 <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(c.total_spent ?? 0)}</Text>
                 <Text style={styles.muted}>{c.transaction_count ?? 0} transaksi</Text>
+                {kind === "customers" && (c.points ?? 0) > 0 ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3, gap: 4 }}>
+                    <Ionicons name="star" size={12} color={colors.warning} />
+                    <Text style={{ color: colors.warning, fontSize: 12, fontWeight: "800" }}>{(c.points ?? 0).toLocaleString("id-ID")} poin</Text>
+                  </View>
+                ) : null}
                 {(c.outstanding ?? 0) > 0 ? <Text style={{ color: colors.warning, fontSize: 12, marginTop: 3, fontWeight: "800" }}>{kind === "customers" ? "Piutang" : "Hutang"} {formatRupiah(c.outstanding ?? 0)}</Text> : null}
               </View>
             </View>

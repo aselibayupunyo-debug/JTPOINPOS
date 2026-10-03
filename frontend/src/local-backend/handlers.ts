@@ -272,6 +272,377 @@ export async function deleteProduct(ctx: Ctx): Promise<any> {
   return deleteSimple("products", u.business_id, ctx.params.id);
 }
 
+// ---------- PRODUCTS IMPORT (CSV) ----------
+/**
+ * Import banyak produk sekaligus dari array rows (frontend sudah parse CSV).
+ * Baris existing berdasarkan `sku` atau `barcode` akan di-upsert.
+ */
+export async function importProducts(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  const rows: any[] = Array.isArray(ctx.body?.rows) ? ctx.body.rows : [];
+  if (!rows.length) throw new HttpError(400, "Tidak ada baris untuk diimpor");
+
+  // Index existing products by sku/barcode untuk upsert.
+  const existing = await db.getAllAsync<{ id: string; json: string }>(
+    "SELECT id, json FROM products WHERE business_id = ?",
+    [u.business_id],
+  );
+  const byKey: Record<string, any> = {};
+  for (const r of existing) {
+    const d = JSON.parse(r.json);
+    if (d.sku) byKey[`sku:${String(d.sku).toLowerCase()}`] = d;
+    if (d.barcode) byKey[`bc:${String(d.barcode).toLowerCase()}`] = d;
+  }
+
+  const now = nowIso();
+  let created = 0, updated = 0;
+  for (const raw of rows) {
+    const name = String(raw.name ?? raw.nama ?? "").trim();
+    if (!name) continue;
+    const price = Number(raw.price ?? raw.harga ?? 0) || 0;
+    const cost = Number(raw.cost ?? raw.pokok ?? raw.hpp ?? 0) || 0;
+    const stock = Number(raw.stock ?? raw.stok ?? 0) || 0;
+    const min_stock = Number(raw.min_stock ?? raw.stok_minimal ?? 0) || 0;
+    const sku = String(raw.sku ?? "").trim();
+    const barcode = String(raw.barcode ?? "").trim();
+    const category = String(raw.category ?? raw.kategori ?? "Umum").trim() || "Umum";
+    const base_unit = String(raw.base_unit ?? raw.satuan ?? "Pcs").trim() || "Pcs";
+    const product_type = (String(raw.product_type ?? raw.tipe ?? "goods").toLowerCase() === "service") ? "service" : "goods";
+
+    const key = sku ? `sku:${sku.toLowerCase()}` : (barcode ? `bc:${barcode.toLowerCase()}` : "");
+    const match = key ? byKey[key] : null;
+    if (match) {
+      const next = { ...match, name, sku, barcode, category, price, cost, stock, min_stock, base_unit, product_type, updated_at: now };
+      await db.runAsync("UPDATE products SET json = ?, updated_at = ? WHERE id = ?", [JSON.stringify(next), now, match.id]);
+      updated++;
+    } else {
+      const doc = { id: uuid(), business_id: u.business_id, name, sku, barcode, category, price, cost, stock, min_stock, base_unit, product_type, created_at: now, updated_at: now };
+      await db.runAsync(
+        "INSERT INTO products (id,business_id,json,created_at,updated_at) VALUES (?,?,?,?,?)",
+        [doc.id, u.business_id, JSON.stringify(doc), now, now],
+      );
+      created++;
+    }
+  }
+  await appendAudit(u.business_id, u, "import_products", "products", { created, updated });
+  return { imported: created + updated, created, updated };
+}
+
+// ---------- STOCK ADJUSTMENTS ----------
+/**
+ * Catat penambahan / pengurangan stok manual.
+ * body: { product_id, delta, reason?, cost? }
+ */
+export async function createStockAdjustment(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  const body = ctx.body || {};
+  const productId = String(body.product_id || "");
+  const delta = Number(body.delta || 0);
+  if (!productId) throw new HttpError(400, "Produk wajib diisi");
+  if (!Number.isFinite(delta) || delta === 0) throw new HttpError(400, "Perubahan stok tidak valid");
+
+  const row = await db.getFirstAsync<{ json: string }>(
+    "SELECT json FROM products WHERE id = ? AND business_id = ?",
+    [productId, u.business_id],
+  );
+  if (!row) throw new HttpError(404, "Produk tidak ditemukan");
+  const product = JSON.parse(row.json);
+  const before = Number(product.stock || 0);
+  const after = Math.max(0, Math.round((before + delta) * 100) / 100);
+  product.stock = after;
+  product.updated_at = nowIso();
+  await db.runAsync("UPDATE products SET json = ?, updated_at = ? WHERE id = ?", [JSON.stringify(product), product.updated_at, productId]);
+
+  const adj = {
+    id: uuid(),
+    business_id: u.business_id,
+    product_id: productId,
+    product_name: product.name,
+    delta,
+    before,
+    after,
+    reason: String(body.reason || (delta > 0 ? "Tambah stok" : "Kurangi stok")),
+    cost: Number(body.cost || 0) || 0,
+    created_at: nowIso(),
+    created_by: u.id,
+    created_by_name: u.display_name,
+  };
+  await db.runAsync(
+    "INSERT INTO stock_adjustments (id,business_id,product_id,created_at,json) VALUES (?,?,?,?,?)",
+    [adj.id, u.business_id, productId, adj.created_at, JSON.stringify(adj)],
+  );
+  return adj;
+}
+export async function listStockAdjustments(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM stock_adjustments WHERE business_id = ? ORDER BY created_at DESC",
+    [u.business_id],
+  );
+  return rows.map((r) => JSON.parse(r.json));
+}
+
+// ---------- EXPENSES ----------
+export async function listExpenses(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  const [start, end] = periodRange(ctx.query);
+  const rows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM expenses WHERE business_id = ? ORDER BY created_at DESC",
+    [u.business_id],
+  );
+  const items = rows.map((r) => JSON.parse(r.json)).filter((e) => {
+    const ts = new Date(e.created_at).getTime();
+    return ts >= start && ts <= end;
+  });
+  const total = items.reduce((s, e) => s + Number(e.amount || 0), 0);
+  return { total, items };
+}
+export async function createExpense(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  const body = ctx.body || {};
+  const amount = Number(body.amount || 0);
+  if (!amount || amount <= 0) throw new HttpError(400, "Jumlah biaya wajib diisi");
+  const now = nowIso();
+  const doc = {
+    id: uuid(),
+    business_id: u.business_id,
+    amount,
+    category: String(body.category || "Lainnya"),
+    note: String(body.note || ""),
+    payment_method: String(body.payment_method || "cash"),
+    payment_method_label: String(body.payment_method_label || "Tunai"),
+    tax_amount: Number(body.tax_amount || 0) || 0,
+    tax_percent: Number(body.tax_percent || 0) || 0,
+    created_at: now,
+    created_by: u.id,
+    created_by_name: u.display_name,
+  };
+  await db.runAsync("INSERT INTO expenses (id,business_id,created_at,json) VALUES (?,?,?,?)", [doc.id, u.business_id, now, JSON.stringify(doc)]);
+
+  // Jika metode pembayaran = cash → juga catat kas keluar
+  const method = String(body.payment_method || "cash");
+  if (method === "cash" || method === "pm_cash") {
+    const entry = {
+      id: uuid(),
+      business_id: u.business_id,
+      amount,
+      entry_type: "expense",
+      category: doc.category,
+      note: `Biaya: ${doc.category}${doc.note ? ` · ${doc.note}` : ""}`,
+      created_at: now,
+      created_by: u.id,
+      created_by_name: u.display_name,
+      expense_id: doc.id,
+    };
+    await db.runAsync("INSERT INTO cash_entries (id,business_id,created_at,json) VALUES (?,?,?,?)", [entry.id, u.business_id, now, JSON.stringify(entry)]);
+  }
+  return doc;
+}
+export async function deleteExpense(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  // Juga hapus cash entry terkait
+  await db.runAsync("DELETE FROM cash_entries WHERE business_id = ? AND json LIKE ?", [u.business_id, `%"expense_id":"${ctx.params.id}"%`]);
+  return deleteSimple("expenses", u.business_id, ctx.params.id);
+}
+
+// ---------- EXPENSE CATEGORIES ----------
+export async function listExpenseCategories(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const list = await fetchListJSON<any>("expense_categories", u.business_id);
+  if (list.length === 0) {
+    // Seed default pos biaya umum
+    const defaults = [
+      "Gaji & THR", "Listrik", "Air", "Internet", "Sewa Tempat",
+      "Transportasi", "Perlengkapan Toko", "Operasional Harian",
+      "Pajak & Retribusi", "Promosi & Iklan", "Perawatan Alat", "Lainnya",
+    ];
+    const db = await getDb();
+    for (const name of defaults) {
+      const d = { id: uuid(), business_id: u.business_id, name };
+      await db.runAsync("INSERT INTO expense_categories (id,business_id,json) VALUES (?,?,?)", [d.id, u.business_id, JSON.stringify(d)]);
+    }
+    return fetchListJSON("expense_categories", u.business_id);
+  }
+  return list;
+}
+export async function createExpenseCategory(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const db = await getDb();
+  const doc = { id: uuid(), business_id: u.business_id, name: String((ctx.body || {}).name || "").trim() };
+  if (!doc.name) throw new HttpError(400, "Nama pos biaya wajib diisi");
+  await db.runAsync("INSERT INTO expense_categories (id,business_id,json) VALUES (?,?,?)", [doc.id, u.business_id, JSON.stringify(doc)]);
+  return doc;
+}
+export async function deleteExpenseCategory(ctx: Ctx): Promise<any> {
+  return deleteSimple("expense_categories", requireUser(ctx).business_id, ctx.params.id);
+}
+
+// ---------- REPORT: STOCK TRACKING ----------
+export async function reportStockTracking(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const [start, end] = periodRange(ctx.query);
+  const db = await getDb();
+
+  // Semua pergerakan: transaksi (sale/purchase/returns) + stock_adjustments
+  const txRows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM transactions_t WHERE business_id = ? ORDER BY created_at DESC",
+    [u.business_id],
+  );
+  const adjRows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM stock_adjustments WHERE business_id = ? ORDER BY created_at DESC",
+    [u.business_id],
+  );
+
+  const rows: any[] = [];
+  for (const r of txRows) {
+    const tx = JSON.parse(r.json);
+    if (tx.status === "cancelled") continue;
+    const ts = new Date(tx.created_at).getTime();
+    if (ts < start || ts > end) continue;
+    const sign =
+      tx.transaction_type === "sale" ? -1 :
+      tx.transaction_type === "purchase" ? +1 :
+      tx.transaction_type === "sale_return" ? +1 :
+      tx.transaction_type === "purchase_return" ? -1 : 0;
+    for (const i of (tx.items || [])) {
+      if ((i.product_type || "goods") !== "goods") continue;
+      rows.push({
+        created_at: tx.created_at,
+        product_id: i.product_id,
+        product_name: i.name,
+        kind: tx.transaction_type,
+        reference: tx.invoice_no,
+        delta: sign * Number(i.quantity || 0),
+        actor: tx.created_by_name || "",
+      });
+    }
+  }
+  for (const r of adjRows) {
+    const a = JSON.parse(r.json);
+    const ts = new Date(a.created_at).getTime();
+    if (ts < start || ts > end) continue;
+    rows.push({
+      created_at: a.created_at,
+      product_id: a.product_id,
+      product_name: a.product_name,
+      kind: "adjustment",
+      reference: a.reason || "Penyesuaian",
+      delta: Number(a.delta || 0),
+      actor: a.created_by_name || "",
+    });
+  }
+  rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  // Current stock snapshot
+  const products = await fetchListJSON<any>("products", u.business_id);
+  const stock_in = rows.filter((r) => r.delta > 0).reduce((s, r) => s + r.delta, 0);
+  const stock_out = rows.filter((r) => r.delta < 0).reduce((s, r) => s + Math.abs(r.delta), 0);
+  return { rows, products, stock_in, stock_out, movement_count: rows.length };
+}
+
+// ---------- REPORT: EXPENSES ----------
+export async function reportExpenses(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const [start, end] = periodRange(ctx.query);
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM expenses WHERE business_id = ? ORDER BY created_at DESC",
+    [u.business_id],
+  );
+  const items = rows.map((r) => JSON.parse(r.json)).filter((e) => {
+    const ts = new Date(e.created_at).getTime();
+    return ts >= start && ts <= end;
+  });
+  const byCategory: Record<string, number> = {};
+  for (const e of items) {
+    byCategory[e.category] = (byCategory[e.category] || 0) + Number(e.amount || 0);
+  }
+  const total = items.reduce((s, e) => s + Number(e.amount || 0), 0);
+  const breakdown = Object.entries(byCategory).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+  return { total, items, breakdown };
+}
+
+// ---------- REPORT: PROFIT & LOSS ----------
+export async function reportProfitLoss(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const [start, end] = periodRange(ctx.query);
+  const db = await getDb();
+  const txs = await txInRange(u.business_id, start, end);
+  const sales = txs.filter((t) => t.transaction_type === "sale");
+  const sreturns = txs.filter((t) => t.transaction_type === "sale_return");
+
+  const gross_sales = sales.reduce((s, t) => s + (t.total || 0), 0);
+  const returns_amount = sreturns.reduce((s, t) => s + (t.total || 0), 0);
+  const net_sales = gross_sales - returns_amount;
+
+  const cogs = sales.reduce((s, t) => s + (t.items || []).reduce((a: number, i: any) => a + (Number(i.cost || 0) * Number(i.quantity || 0)), 0), 0)
+    - sreturns.reduce((s, t) => s + (t.items || []).reduce((a: number, i: any) => a + (Number(i.cost || 0) * Number(i.quantity || 0)), 0), 0);
+  const gross_profit = net_sales - cogs;
+
+  const expRows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM expenses WHERE business_id = ?",
+    [u.business_id],
+  );
+  const expenses = expRows.map((r) => JSON.parse(r.json)).filter((e) => {
+    const ts = new Date(e.created_at).getTime();
+    return ts >= start && ts <= end;
+  });
+  const expenses_total = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
+  const expenses_by_category: Record<string, number> = {};
+  for (const e of expenses) expenses_by_category[e.category] = (expenses_by_category[e.category] || 0) + Number(e.amount || 0);
+
+  const net_profit = gross_profit - expenses_total;
+  return {
+    gross_sales,
+    returns_amount,
+    net_sales,
+    cogs,
+    gross_profit,
+    expenses_total,
+    expenses_by_category: Object.entries(expenses_by_category).map(([category, amount]) => ({ category, amount })),
+    net_profit,
+    margin: net_sales > 0 ? (net_profit / net_sales) * 100 : 0,
+    transaction_count: sales.length,
+  };
+}
+
+// ---------- REPORT: TAX SUMMARY ----------
+export async function reportTaxSummary(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const [start, end] = periodRange(ctx.query);
+  const txs = await txInRange(u.business_id, start, end);
+  const sales = txs.filter((t) => t.transaction_type === "sale");
+  const purchases = txs.filter((t) => t.transaction_type === "purchase");
+
+  const tax_out = sales.reduce((s, t) => s + Number(t.tax_amount || 0), 0);
+  const tax_in = purchases.reduce((s, t) => s + Number(t.tax_amount || 0), 0);
+  const dpp_out = sales.reduce((s, t) => s + Math.max(0, Number(t.total || 0) - Number(t.tax_amount || 0)), 0);
+  const dpp_in = purchases.reduce((s, t) => s + Math.max(0, Number(t.total || 0) - Number(t.tax_amount || 0)), 0);
+
+  const details = sales.filter((t) => Number(t.tax_amount || 0) > 0).map((t) => ({
+    invoice_no: t.invoice_no,
+    created_at: t.created_at,
+    customer_name: t.customer_name,
+    total: t.total,
+    tax_amount: t.tax_amount,
+    dpp: Math.max(0, Number(t.total || 0) - Number(t.tax_amount || 0)),
+  }));
+
+  return {
+    tax_out, tax_in, dpp_out, dpp_in,
+    net_tax: tax_out - tax_in,
+    sales_count: sales.length,
+    purchase_count: purchases.length,
+    details,
+  };
+}
+
 // ---------- CATEGORIES ----------
 export async function listCategories(ctx: Ctx): Promise<any> { return listSimple("categories", requireUser(ctx).business_id); }
 export async function createCategory(ctx: Ctx): Promise<any> { return upsertSimple("categories", requireUser(ctx).business_id, ctx.body); }
@@ -285,8 +656,37 @@ export async function updatePaymentMethod(ctx: Ctx): Promise<any> { return upser
 export async function deletePaymentMethod(ctx: Ctx): Promise<any> { return deleteSimple("payment_methods", requireUser(ctx).business_id, ctx.params.id); }
 
 // ---------- CONTACTS (customers + suppliers) ----------
-async function listContacts(businessId: string, kind: "customer" | "supplier"): Promise<any[]> {
-  return fetchListJSON("contacts", businessId, "AND kind = ?", [kind]);
+async function listContacts(businessId: string, kind: "customer" | "supplier", search?: string): Promise<any[]> {
+  const base = await fetchListJSON<any>("contacts", businessId, "AND kind = ?", [kind]);
+  const term = (search || "").trim().toLowerCase();
+  const filtered = term
+    ? base.filter((c) => `${c.name ?? ""} ${c.phone ?? ""} ${c.address ?? ""}`.toLowerCase().includes(term))
+    : base;
+
+  // Compute transaction_count, total_spent, outstanding, points per contact.
+  const db = await getDb();
+  const txType = kind === "customer" ? "sale" : "purchase";
+  const txRows = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM transactions_t WHERE business_id = ? AND transaction_type = ?",
+    [businessId, txType],
+  );
+  const txs = txRows.map((r) => JSON.parse(r.json)).filter((t) => t.status !== "cancelled");
+
+  return filtered.map((c) => {
+    const matchKey = kind === "customer" ? "customer_id" : "supplier_id";
+    const related = txs.filter((t) => t[matchKey] === c.id);
+    const total_spent = related.reduce((s, t) => s + (t.total || 0), 0);
+    const outstanding = related.reduce((s, t) => s + Math.max(0, t.outstanding || 0), 0);
+    // Poin: 1 poin tiap Rp 1.000 pembelanjaan (hanya pelanggan).
+    const points = kind === "customer" ? Math.floor(total_spent / 1000) : 0;
+    return {
+      ...c,
+      transaction_count: related.length,
+      total_spent,
+      outstanding,
+      points,
+    };
+  });
 }
 async function upsertContact(businessId: string, body: any, kind: "customer" | "supplier", id?: string): Promise<any> {
   const db = await getDb();
@@ -294,11 +694,11 @@ async function upsertContact(businessId: string, body: any, kind: "customer" | "
   await db.runAsync("INSERT INTO contacts (id,business_id,kind,json) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, kind = excluded.kind", [doc.id, businessId, kind, JSON.stringify(doc)]);
   return doc;
 }
-export async function getCustomers(ctx: Ctx): Promise<any> { return listContacts(requireUser(ctx).business_id, "customer"); }
+export async function getCustomers(ctx: Ctx): Promise<any> { return listContacts(requireUser(ctx).business_id, "customer", ctx.query.search); }
 export async function createCustomer(ctx: Ctx): Promise<any> { return upsertContact(requireUser(ctx).business_id, ctx.body, "customer"); }
 export async function updateCustomer(ctx: Ctx): Promise<any> { return upsertContact(requireUser(ctx).business_id, ctx.body, "customer", ctx.params.id); }
 export async function deleteCustomer(ctx: Ctx): Promise<any> { return deleteSimple("contacts", requireUser(ctx).business_id, ctx.params.id); }
-export async function getSuppliers(ctx: Ctx): Promise<any> { return listContacts(requireUser(ctx).business_id, "supplier"); }
+export async function getSuppliers(ctx: Ctx): Promise<any> { return listContacts(requireUser(ctx).business_id, "supplier", ctx.query.search); }
 export async function createSupplier(ctx: Ctx): Promise<any> { return upsertContact(requireUser(ctx).business_id, ctx.body, "supplier"); }
 export async function updateSupplier(ctx: Ctx): Promise<any> { return upsertContact(requireUser(ctx).business_id, ctx.body, "supplier", ctx.params.id); }
 export async function deleteSupplier(ctx: Ctx): Promise<any> { return deleteSimple("contacts", requireUser(ctx).business_id, ctx.params.id); }

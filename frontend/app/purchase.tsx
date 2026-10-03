@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, Contact, formatRupiah, PAYMENT_LABELS, PaymentMethod, PaymentMethodDoc, Product } from "@/src/api";
+import { apiRequest, Contact, formatRupiah, PaymentMethod, PaymentMethodDoc, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -32,8 +32,8 @@ export default function PurchaseScreen() {
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
-  const [method, setMethod] = useState<PaymentMethod>("cash");
-  const [methodLabel, setMethodLabel] = useState<string>(PAYMENT_LABELS.cash);
+  const [method, setMethod] = useState<PaymentMethod>("");
+  const [methodLabel, setMethodLabel] = useState<string>("");
   const [supplier, setSupplier] = useState("");
   const [paidText, setPaidText] = useState("");
   const [note, setNote] = useState("");
@@ -44,8 +44,14 @@ export default function PurchaseScreen() {
   useEffect(() => {
     apiRequest<Product[]>("/products").then(setProducts).catch(() => undefined);
     apiRequest<Contact[]>("/suppliers").then(setSuppliers).catch(() => undefined);
-    apiRequest<PaymentMethodDoc[]>("/payment-methods").then(setMethods).catch(() => undefined);
+    apiRequest<PaymentMethodDoc[]>("/payment-methods").then((list) => {
+      setMethods(list);
+      const first = list.find((m) => m.enabled !== false);
+      if (first) { setMethod(first.id); setMethodLabel(first.name); }
+    }).catch(() => undefined);
   }, []);
+  const currentMethod = methods.find((m) => m.id === method);
+  const isCredit = currentMethod?.kind === "credit";
   const filtered = products.filter((p) => `${p.name} ${p.barcode}`.toLowerCase().includes(search.toLowerCase())).slice(0, 20);
   const total = lines.reduce((s, l) => s + l.price * l.quantity, 0);
   const paid = Number(paidText.replace(/\D/g, "")) || 0;
@@ -88,7 +94,8 @@ export default function PurchaseScreen() {
 
   const submit = async () => {
     if (!lines.length) return toast.error("Belum ada item");
-    if (method === "credit" && !supplier.trim()) return toast.error("Nama supplier wajib untuk kredit");
+    if (!method) return toast.error("Pilih metode pembayaran");
+    if (isCredit && !supplier.trim()) return toast.error("Nama supplier wajib untuk kredit");
     setBusy(true);
     try {
       await apiRequest("/transactions", {
@@ -97,7 +104,7 @@ export default function PurchaseScreen() {
           transaction_type: "purchase",
           payment_method: method,
           payment_method_label: methodLabel,
-          paid_amount: method === "cash" ? total : paid,
+          paid_amount: isCredit ? paid : total,
           customer_name: supplier.trim() || "Supplier",
           supplier_id: supplierId,
           note,
@@ -170,28 +177,29 @@ export default function PurchaseScreen() {
         ) : null}
         <Text style={styles.inputLabel}>Metode pembayaran</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-          {(["cash", "credit", ...methods.filter((m) => m.enabled !== false).map((m) => m.kind)] as PaymentMethod[]).map((m, idx) => {
-            const custom = methods.find((cm) => cm.kind === m);
-            const label = custom?.label ?? PAYMENT_LABELS[m];
-            const selected = method === m;
+          {methods.filter((m) => m.enabled !== false).map((m) => {
+            const selected = method === m.id;
             return (
               <Pressable
-                key={`${m}-${idx}`}
-                testID={`purchase-pay-${m}`}
-                onPress={() => { setMethod(m); setMethodLabel(label); }}
+                key={m.id}
+                testID={`purchase-pay-${m.id}`}
+                onPress={() => { setMethod(m.id); setMethodLabel(m.name); }}
                 style={[{ paddingHorizontal: 14, minHeight: 44, borderRadius: 12, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }, selected && { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]}
               >
-                <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: "800" }}>{label}</Text>
+                <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: "800" }}>{m.name}</Text>
               </Pressable>
             );
           })}
+          {methods.length === 0 ? (
+            <Text style={styles.muted}>Belum ada metode. Tambahkan di menu Metode Pembayaran.</Text>
+          ) : null}
         </View>
         <Text style={styles.inputLabel}>Nama supplier</Text>
         <View style={[styles.row, { gap: 10, marginBottom: 12 }]}>
-          <TextInput value={supplier} onChangeText={(t) => { setSupplier(t); setSupplierId(null); }} style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder={method === "credit" ? "Wajib untuk kredit" : "Opsional"} placeholderTextColor={colors.muted} />
+          <TextInput value={supplier} onChangeText={(t) => { setSupplier(t); setSupplierId(null); }} style={[styles.input, { flex: 1, marginBottom: 0 }]} placeholder={isCredit ? "Wajib untuk kredit" : "Opsional"} placeholderTextColor={colors.muted} />
           <Pressable testID="pick-supplier" onPress={() => setPicker(true)} style={styles.iconButton}><Ionicons name="briefcase-outline" size={22} color={colors.brandPrimary} /></Pressable>
         </View>
-        {method === "credit" ? (
+        {isCredit ? (
           <>
             <Text style={styles.inputLabel}>Uang muka (opsional)</Text>
             <TextInput value={paidText} onChangeText={setPaidText} keyboardType="number-pad" style={styles.input} placeholder="0" placeholderTextColor={colors.muted} />

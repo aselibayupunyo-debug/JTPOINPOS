@@ -3,12 +3,11 @@ import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { SvgXml } from "react-native-svg";
 
 import { apiRequest, BusinessSettings, formatRupiah, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { Header } from "@/src/components/header";
-import { barcodeSvg, printBarcodeSheet } from "@/src/pdf";
+import { printBarcodeSheet } from "@/src/pdf";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -27,17 +26,27 @@ type PreviewProps = {
 };
 
 /**
- * Mock tampilan 1 label pada printer thermal.
- * Lebar visual disesuaikan ke paperWidth: 58mm ≈ 230px, 80mm ≈ 320px.
+ * Mock tampilan 1 label. Tidak pakai `bwip-js` / `react-native-svg` agar
+ * TIDAK CRASH di Android (bwip-js lazy-load `react-zlib-js` sering gagal).
+ * Barcode direpresentasikan dengan pola batang vertikal berbeda lebar yang
+ * di-generate secara deterministik dari string kode.
  */
 function LabelPreview({ name, code, price, businessName, paperWidth }: PreviewProps) {
   const widthPx = paperWidth === "80mm" ? 320 : 230;
-  const svg = useMemo(() => {
-    try {
-      return barcodeSvg(code || name || "NA", { height: 14, scale: 2, includetext: true });
-    } catch {
-      return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="30"><text x="4" y="20">${code}</text></svg>`;
+
+  // Deterministic bar pattern dari kode (bukan barcode valid, hanya visual).
+  const bars = useMemo(() => {
+    const seed = String(code || name || "NA");
+    const out: { w: number; filled: boolean }[] = [];
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+    for (let i = 0; i < 48; i++) {
+      h = (h * 1103515245 + 12345) | 0;
+      const w = ((Math.abs(h) % 4) + 1); // lebar 1-4 px
+      const filled = ((h >> 4) & 1) === 1;
+      out.push({ w, filled });
     }
+    return out;
   }, [code, name]);
 
   return (
@@ -57,9 +66,22 @@ function LabelPreview({ name, code, price, businessName, paperWidth }: PreviewPr
       <Text numberOfLines={2} style={{ fontSize: 12, fontWeight: "800", color: "#111", textAlign: "center" }}>
         {name || "Nama produk"}
       </Text>
-      <View style={{ marginTop: 6, width: "100%", alignItems: "center" }}>
-        <SvgXml xml={svg} width={widthPx - 24} height={56} />
+      <View
+        style={{
+          marginTop: 8,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 48,
+          gap: 1,
+          paddingHorizontal: 8,
+        }}
+      >
+        {bars.map((b, i) => (
+          <View key={i} style={{ width: b.w, height: 44, backgroundColor: b.filled ? "#111" : "#ffffff" }} />
+        ))}
       </View>
+      <Text style={{ fontSize: 10, color: "#111", letterSpacing: 1, fontFamily: "monospace", marginTop: 2 }}>{code}</Text>
       {typeof price === "number" ? (
         <Text style={{ marginTop: 4, fontSize: 13, fontWeight: "900", color: "#111" }}>
           {formatRupiah(price)}

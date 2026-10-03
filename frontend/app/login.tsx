@@ -79,9 +79,33 @@ export default function LoginScreen() {
             <Text style={styles.cardTitle}>Selamat datang kembali</Text>
             <Text style={[styles.subtitle, { marginBottom: 18 }]}>Masuk untuk melanjutkan operasional toko.</Text>
             <Text style={styles.inputLabel}>Username</Text>
-            <TextInput testID="input-username" autoCapitalize="none" value={username} onChangeText={setUsername} placeholder="username" placeholderTextColor={colors.muted} style={styles.input} />
+            <TextInput
+              testID="input-username"
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect={false}
+              textContentType="none"
+              importantForAutofill="no"
+              value={username}
+              onChangeText={setUsername}
+              placeholder="username"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
             <Text style={styles.inputLabel}>Password</Text>
-            <TextInput testID="input-password" secureTextEntry value={password} onChangeText={setPassword} placeholder="Minimal 6 karakter" placeholderTextColor={colors.muted} style={styles.input} />
+            <TextInput
+              testID="input-password"
+              secureTextEntry
+              autoComplete="off"
+              autoCorrect={false}
+              textContentType="none"
+              importantForAutofill="no"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Minimal 6 karakter"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
             {error ? <Text style={{ color: colors.error, fontSize: 13, marginBottom: 12 }} testID="auth-error">{error}</Text> : null}
             <Pressable testID="submit-auth" accessibilityRole="button" onPress={submit} disabled={busy} style={({ pressed }) => [styles.primaryButton, pressed && { opacity: 0.82 }]}>
               {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Masuk ke kasir</Text>}
@@ -118,6 +142,10 @@ export default function LoginScreen() {
               placeholder="Password darurat"
               placeholderTextColor={colors.muted}
               secureTextEntry
+              autoComplete="off"
+              autoCorrect={false}
+              textContentType="none"
+              importantForAutofill="no"
               autoFocus
               style={styles.input}
             />

@@ -39,8 +39,21 @@ const ROUTES: { method: Method; pattern: string; handler: Handler; public?: bool
   // Products
   { method: "GET", pattern: "/products", handler: h.listProducts },
   { method: "POST", pattern: "/products", handler: h.createProduct },
+  { method: "POST", pattern: "/products/import", handler: h.importProducts },
   { method: "PUT", pattern: "/products/:id", handler: h.updateProduct },
   { method: "DELETE", pattern: "/products/:id", handler: h.deleteProduct },
+
+  // Stock adjustments
+  { method: "GET", pattern: "/stock-adjustments", handler: h.listStockAdjustments },
+  { method: "POST", pattern: "/stock-adjustments", handler: h.createStockAdjustment },
+
+  // Expenses + categories
+  { method: "GET", pattern: "/expenses", handler: h.listExpenses },
+  { method: "POST", pattern: "/expenses", handler: h.createExpense },
+  { method: "DELETE", pattern: "/expenses/:id", handler: h.deleteExpense },
+  { method: "GET", pattern: "/expense-categories", handler: h.listExpenseCategories },
+  { method: "POST", pattern: "/expense-categories", handler: h.createExpenseCategory },
+  { method: "DELETE", pattern: "/expense-categories/:id", handler: h.deleteExpenseCategory },
 
   // Categories
   { method: "GET", pattern: "/categories", handler: h.listCategories },
@@ -104,6 +117,10 @@ const ROUTES: { method: Method; pattern: string; handler: Handler; public?: bool
   { method: "GET", pattern: "/reports/customers", handler: h.reportCustomers },
   { method: "GET", pattern: "/reports/operators", handler: h.reportOperators },
   { method: "GET", pattern: "/reports/sales-items", handler: h.reportSalesItems },
+  { method: "GET", pattern: "/reports/stock-tracking", handler: h.reportStockTracking },
+  { method: "GET", pattern: "/reports/expenses", handler: h.reportExpenses },
+  { method: "GET", pattern: "/reports/profit-loss", handler: h.reportProfitLoss },
+  { method: "GET", pattern: "/reports/tax-summary", handler: h.reportTaxSummary },
 
   // Operators
   { method: "GET", pattern: "/operators", handler: h.listOperators },

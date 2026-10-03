@@ -33,7 +33,8 @@ export default function LainnyaScreen() {
 
   const items: MenuItem[] = [
     { icon: "cart-outline", title: "Pembelian baru", detail: "Catat barang masuk dari supplier", path: "/purchase", permission: "purchases" },
-    { icon: "return-up-back-outline", title: "Retur transaksi", detail: "Retur penjualan atau pembelian", path: "/returns", permission: "returns" },
+    { icon: "cash-outline", title: "Transaksi biaya", detail: "Catat pengeluaran operasional (listrik, gaji, dsb.)", path: "/expenses", permission: "cashflow" },
+    { icon: "return-up-back-outline", title: "Retur transaksi", detail: "Retur penjualan atau pembelian berbasis stok", path: "/returns", permission: "returns" },
     { icon: "layers-outline", title: "Antrian transaksi", detail: "Transaksi diparkir yang bisa dilanjutkan", path: "/parked", permission: "sales" },
     { icon: "time-outline", title: "Shift kasir", detail: "Buka/tutup shift, saldo kas per kasir", path: "/shifts", permission: "sales" },
     { icon: "gift-outline", title: "Promo & bundling", detail: "Beli 2 gratis 1, paket harga tetap, diskon", path: "/promos", permission: "settings" },
@@ -42,6 +43,10 @@ export default function LainnyaScreen() {
     { icon: "people-outline", title: "Pelanggan", detail: "Database pelanggan & total transaksi", path: "/customers" },
     { icon: "briefcase-outline", title: "Supplier", detail: "Database supplier & total pembelian", path: "/suppliers" },
     { icon: "receipt-outline", title: "Riwayat transaksi", detail: "Semua transaksi · cetak ulang struk/invoice", path: "/history" },
+    { icon: "trending-up-outline", title: "Laporan tracking stok", detail: "Pergerakan stok masuk/keluar · PDF & Excel", path: "/stock-tracking", permission: "reports" },
+    { icon: "stats-chart-outline", title: "Laporan laba rugi", detail: "Pendapatan dikurangi HPP & biaya", path: "/profit-loss", permission: "reports" },
+    { icon: "wallet-outline", title: "Laporan biaya", detail: "Rekap biaya per pos · PDF & Excel", path: "/expense-report", permission: "reports" },
+    { icon: "document-text-outline", title: "Rekap pajak", detail: "DPP + PPN keluaran vs masukan", path: "/tax-report", permission: "reports" },
     { icon: "barcode-outline", title: "Cetak barcode label", detail: "Cetak stiker barcode produk", path: "/barcode-print", permission: "inventory" },
     { icon: "pricetags-outline", title: "Kategori barang", detail: "Atur kategori produk", path: "/categories", permission: "inventory" },
     { icon: "card-outline", title: "Metode pembayaran", detail: "Tunai, Kredit, QRIS statis, kustom", path: "/payment-methods", permission: "settings" },
