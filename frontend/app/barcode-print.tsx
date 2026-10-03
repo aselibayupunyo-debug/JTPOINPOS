@@ -13,8 +13,6 @@ import { useToast } from "@/src/toast";
 
 const LAYOUTS = [
   { key: "small", label: "Kecil 38×25mm", perRow: 5, widthMm: 38, heightMm: 25 },
-  { key: "medium", label: "Sedang 50×30mm", perRow: 4, widthMm: 50, heightMm: 30 },
-  { key: "large", label: "Besar 70×40mm", perRow: 2, widthMm: 70, heightMm: 40 },
 ];
 
 type PreviewProps = {
@@ -103,7 +101,6 @@ export default function BarcodePrintScreen() {
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Record<string, number>>({});
-  const [layoutKey, setLayoutKey] = useState("medium");
   const [showPrice, setShowPrice] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -140,7 +137,7 @@ export default function BarcodePrintScreen() {
         toast.success("Barcode tercetak", `${totalLabels} label · ${paired.name}`);
       } else {
         // 2) Fallback: PDF via expo-print (untuk printer A4 / dibagikan)
-        const layout = LAYOUTS.find((l) => l.key === layoutKey) ?? LAYOUTS[1];
+        const layout = LAYOUTS[0];
         await printBarcodeSheet(labels, layout, settings.business_name ?? "");
         toast.info("PDF siap", "Printer Bluetooth belum terhubung. Kami buat PDF untuk dibagikan.");
       }
@@ -159,13 +156,13 @@ export default function BarcodePrintScreen() {
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Ukuran stiker</Text>
-          <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>Hanya dipakai untuk cetak PDF (fallback). Printer thermal pakai lebar kertas: {paperWidth}.</Text>
+          <Text style={[styles.muted, { fontSize: 11, marginTop: 2 }]}>
+            Semua label dicetak ukuran **Kecil 38×25mm**. Printer thermal pakai lebar kertas: {paperWidth}.
+          </Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-            {LAYOUTS.map((l) => (
-              <Pressable key={l.key} testID={`layout-${l.key}`} onPress={() => setLayoutKey(l.key)} style={[{ paddingHorizontal: 14, minHeight: 44, borderRadius: 12, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }, layoutKey === l.key && { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]}>
-                <Text style={{ color: colors.onSurfaceTertiary, fontSize: 12, fontWeight: "800" }}>{l.label}</Text>
-              </Pressable>
-            ))}
+            <View style={{ paddingHorizontal: 14, minHeight: 44, borderRadius: 12, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ color: colors.brandPrimary, fontSize: 12, fontWeight: "800" }}>Kecil 38×25mm</Text>
+            </View>
           </View>
           <Pressable testID="toggle-price" onPress={() => setShowPrice((v) => !v)} style={[styles.listRow, { paddingVertical: 10 }]}>
             <View style={{ flex: 1 }}><Text style={styles.productName}>Cetak harga di stiker</Text></View>
