@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import { Pressable, ScrollView, Share, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { adminDeleteAllProducts, adminResetTransactions, apiRequest, IntegrationState } from "@/src/api";
@@ -106,19 +106,6 @@ export default function LainnyaScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Data & keamanan</Text>
-          <Pressable testID="backup-button" onPress={async () => {
-            try {
-              const data = await apiRequest<Record<string, unknown>>("/backup");
-              await Share.share({ title: "Backup JTPOIN POS", message: JSON.stringify(data, null, 2) });
-            } catch (e) { toast.error("Backup gagal", e instanceof Error ? e.message : undefined); }
-          }} style={styles.listRow}>
-            <View style={styles.settingIcon}><Ionicons name="cloud-download-outline" size={20} color={colors.brandPrimary} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.productName}>Backup data</Text>
-              <Text style={styles.muted}>Bagikan salinan JSON seluruh bisnis</Text>
-            </View>
-            <Ionicons name="share-outline" size={19} color={colors.muted} />
-          </Pressable>
           <Pressable testID="menu-bluetooth-printer" onPress={() => router.push("/bluetooth-printer")} style={styles.listRow}>
             <View style={styles.settingIcon}><Ionicons name="print-outline" size={20} color={colors.brandPrimary} /></View>
             <View style={{ flex: 1 }}>

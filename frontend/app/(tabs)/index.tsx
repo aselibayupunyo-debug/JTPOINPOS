@@ -688,7 +688,7 @@ function CheckoutSheet({
                 <View style={styles.between}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.productName}>{item.name}{item.unit ? ` · ${item.unit}` : ""}</Text>
-                    {editing === key && (settings?.allow_price_edit ?? true) ? (
+                    {editing === key ? (
                       <View style={[styles.row, { marginTop: 6 }]}>
                         <TextInput
                           testID={`edit-price-${key}`}
@@ -715,8 +715,8 @@ function CheckoutSheet({
                         />
                       </View>
                     ) : (
-                      <Pressable onPress={() => (settings?.allow_price_edit ?? true) && setEditing(key)}>
-                        <Text style={styles.muted}>{formatRupiah(item.price)} × {fmtQty(item.quantity)}{(settings?.allow_price_edit ?? true) ? " · ketuk harga" : ""}</Text>
+                      <Pressable onPress={() => setEditing(key)}>
+                        <Text style={styles.muted}>{formatRupiah(item.price)} × {fmtQty(item.quantity)} · ketuk harga</Text>
                       </Pressable>
                     )}
                     <Pressable
