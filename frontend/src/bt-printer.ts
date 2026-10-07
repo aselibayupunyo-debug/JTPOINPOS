@@ -217,6 +217,14 @@ const ESC = 0x1b, GS = 0x1d;
 class EscposBuilder {
   private bytes: number[] = [];
   push(...b: number[]) { for (const x of b) this.bytes.push(x & 0xff); return this; }
+  /**
+   * Push a Uint8Array / number[] secara aman (tidak pakai spread yang bisa
+   * crash saat argumen > 32k di Hermes). Penting untuk logo raster besar.
+   */
+  pushBytes(data: Uint8Array | number[]) {
+    for (let i = 0; i < data.length; i++) this.bytes.push(data[i] & 0xff);
+    return this;
+  }
   init() { return this.push(ESC, 0x40); }
   codePage() { return this.push(ESC, 0x74, 0x10); } // CP858 (contains €, umumnya kompatibel)
   text(s: string) {
@@ -232,9 +240,16 @@ class EscposBuilder {
   cut() { return this.push(GS, 0x56, 0x01); }
   cashDrawer() { return this.push(ESC, 0x70, 0x00, 0x19, 0xfa); }
   base64() {
-    const chunk = 0x8000;
+    // Encode semua bytes ke base64 tanpa pakai spread (anti-crash di Hermes
+    // untuk payload besar seperti logo raster).
+    const chunk = 4096;
     let bin = "";
-    for (let i = 0; i < this.bytes.length; i += chunk) bin += String.fromCharCode(...this.bytes.slice(i, i + chunk));
+    for (let i = 0; i < this.bytes.length; i += chunk) {
+      let s = "";
+      const end = Math.min(this.bytes.length, i + chunk);
+      for (let j = i; j < end; j++) s += String.fromCharCode(this.bytes[j]);
+      bin += s;
+    }
     // eslint-disable-next-line no-restricted-globals
     return typeof btoa !== "undefined" ? btoa(bin) : "";
   }
@@ -305,7 +320,10 @@ export async function printReceipt(
   if (settings.logo_base64) {
     try {
       const logoBytes = await fetchLogoBytes(paperWidth, settings.logo_base64);
-      if (logoBytes && logoBytes.length) b.push(...Array.from(logoBytes));
+      // Pakai pushBytes agar aman untuk array besar (logo bisa > 18KB).
+      // Spread (...) ke `push` arguments bisa gagal / truncate di Hermes
+      // saat elemen > ~32k.
+      if (logoBytes && logoBytes.length) b.pushBytes(logoBytes);
     } catch { /* abaikan logo kalau gagal konversi */ }
   }
 

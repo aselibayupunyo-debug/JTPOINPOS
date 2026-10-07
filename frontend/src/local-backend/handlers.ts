@@ -1246,13 +1246,49 @@ export async function resetTransactions(ctx: Ctx): Promise<any> {
   const row = await db.getFirstAsync<any>("SELECT password_hash, password_salt FROM users WHERE id = ?", [u.id]);
   const pw = (ctx.body || {}).password;
   if (!pw || !row || !(await verifyPassword(pw, row.password_hash, row.password_salt))) throw new HttpError(401, "Password salah");
+
+  // Hitung jumlah sebelum dihapus (untuk ditampilkan di UI).
+  const count = async (table: string): Promise<number> => {
+    const r = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) as c FROM ${table} WHERE business_id = ?`, [u.business_id]);
+    return r?.c ?? 0;
+  };
+  const deleted = {
+    transactions: await count("transactions_t"),
+    parked: await count("parked"),
+    cashflow: await count("cash_entries"),
+    shifts: await count("shifts"),
+    debts: await count("debts"),
+    stock_adjustments: await count("stock_adjustments"),
+    expenses: await count("expenses"),
+  };
+
+  // Hitung total produk sebelum di-reset stok.
+  const productCount = await count("products");
+
   await db.runAsync("DELETE FROM transactions_t WHERE business_id = ?", [u.business_id]);
   await db.runAsync("DELETE FROM cash_entries WHERE business_id = ?", [u.business_id]);
   await db.runAsync("DELETE FROM debts WHERE business_id = ?", [u.business_id]);
   await db.runAsync("DELETE FROM parked WHERE business_id = ?", [u.business_id]);
   await db.runAsync("DELETE FROM shifts WHERE business_id = ?", [u.business_id]);
-  await appendAudit(u.business_id, u, "reset", "transactions", {});
-  return { ok: true };
+  await db.runAsync("DELETE FROM stock_adjustments WHERE business_id = ?", [u.business_id]);
+  await db.runAsync("DELETE FROM expenses WHERE business_id = ?", [u.business_id]);
+
+  // Reset stok semua produk ke 0 (produk tidak dihapus, cuma stoknya).
+  const products = await db.getAllAsync<{ id: string; json: string }>("SELECT id, json FROM products WHERE business_id = ?", [u.business_id]);
+  for (const p of products) {
+    try {
+      const doc = JSON.parse(p.json);
+      doc.stock = 0;
+      doc.updated_at = nowIso();
+      await db.runAsync("UPDATE products SET json = ?, updated_at = ? WHERE id = ?", [JSON.stringify(doc), doc.updated_at, p.id]);
+    } catch { /* skip jika json rusak */ }
+  }
+
+  // Reset counter nomor invoice supaya mulai dari 1 lagi.
+  await db.runAsync("DELETE FROM counters WHERE business_id = ?", [u.business_id]);
+
+  await appendAudit(u.business_id, u, "reset", "transactions", { deleted, products_stock_reset: productCount });
+  return { ok: true, deleted, products_stock_reset: productCount };
 }
 export async function deleteAllProducts(ctx: Ctx): Promise<any> {
   const u = requireUser(ctx);
@@ -1260,9 +1296,12 @@ export async function deleteAllProducts(ctx: Ctx): Promise<any> {
   const row = await db.getFirstAsync<any>("SELECT password_hash, password_salt FROM users WHERE id = ?", [u.id]);
   const pw = (ctx.body || {}).password;
   if (!pw || !row || !(await verifyPassword(pw, row.password_hash, row.password_salt))) throw new HttpError(401, "Password salah");
+  const cRow = await db.getFirstAsync<{ c: number }>("SELECT COUNT(*) as c FROM products WHERE business_id = ?", [u.business_id]);
+  const deleted = cRow?.c ?? 0;
   await db.runAsync("DELETE FROM products WHERE business_id = ?", [u.business_id]);
-  await appendAudit(u.business_id, u, "delete-all", "products", {});
-  return { ok: true };
+  await db.runAsync("DELETE FROM stock_adjustments WHERE business_id = ?", [u.business_id]);
+  await appendAudit(u.business_id, u, "delete-all", "products", { deleted });
+  return { ok: true, deleted };
 }
 
 // ---------- EMERGENCY PROFILE UPDATE ----------

@@ -68,8 +68,12 @@ export default function LainnyaScreen() {
     try {
       const res = await adminResetTransactions(password);
       setResetOpen(false);
-      const d = res.deleted;
-      toast.success("Transaksi direset", `Dihapus: ${d.transactions} transaksi · ${d.parked} antrian · ${d.cashflow} kas · ${d.shifts} shift`);
+      const d = res.deleted ?? ({} as Record<string, number>);
+      const stock = (res as any).products_stock_reset ?? 0;
+      toast.success(
+        "Transaksi direset",
+        `Dihapus: ${d.transactions ?? 0} transaksi · ${d.parked ?? 0} antrian · ${d.cashflow ?? 0} kas · ${d.shifts ?? 0} shift${stock ? ` · stok ${stock} produk → 0` : ""}`,
+      );
     } catch (e) { toast.error("Gagal reset", e instanceof Error ? e.message : undefined); }
   };
 
