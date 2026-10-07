@@ -56,6 +56,7 @@ export default function TransactionSettingsScreen() {
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Perilaku kasir</Text>
+          <ToggleRow label="Perbolehkan kasir mengubah harga manual di keranjang" value={!!s.allow_price_edit} onChange={(v) => setS({ ...s, allow_price_edit: v })} />
           <ToggleRow label="Perbolehkan cetak struk sebelum selesaikan transaksi" value={!!s.allow_preview_print} onChange={(v) => setS({ ...s, allow_preview_print: v })} />
           <ToggleRow label="Konfirmasi sebelum batal transaksi" value={!!s.confirm_cancel} onChange={(v) => setS({ ...s, confirm_cancel: v })} />
           <ToggleRow label="Park otomatis saat tombol batal (bukan hapus)" value={!!s.auto_park_on_cancel} onChange={(v) => setS({ ...s, auto_park_on_cancel: v })} />
@@ -93,6 +94,30 @@ export default function TransactionSettingsScreen() {
           <ToggleRow label="Aktifkan cash drawer (ESC/POS)" value={!!s.cashdrawer_enabled} onChange={(v) => setS({ ...s, cashdrawer_enabled: v })} />
           <ToggleRow label="Multi-printer (cetak ke beberapa printer)" value={!!s.multi_printer} onChange={(v) => setS({ ...s, multi_printer: v })} />
           <Text style={[styles.muted, { marginTop: 8 }]}>Catatan: cash drawer & multi-printer aktif pada build Android produksi.</Text>
+        </View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Printer dapur (kitchen)</Text>
+          <Text style={[styles.muted, { marginBottom: 10 }]}>Kapan nota dapur dicetak? (hanya untuk item ber-tag dapur)</Text>
+          {([
+            { key: "after", label: "Cetak setelah transaksi selesai", detail: "Default. Nota dapur dicetak otomatis setelah pelanggan membayar." },
+            { key: "with_preview", label: "Cetak berbarengan preview struk", detail: "Nota dapur ikut tercetak saat kasir tekan \"Cetak struk sekarang\" sebelum menyelesaikan transaksi." },
+          ] as const).map((opt) => {
+            const selected = (s.kitchen_print_timing || "after") === opt.key;
+            return (
+              <Pressable
+                key={opt.key}
+                testID={`kitchen-timing-${opt.key}`}
+                onPress={() => setS({ ...s, kitchen_print_timing: opt.key })}
+                style={[styles.listRow, selected && { backgroundColor: colors.brandTertiary, borderRadius: 10 }]}
+              >
+                <Ionicons name={selected ? "radio-button-on" : "radio-button-off"} size={22} color={colors.brandPrimary} style={{ marginRight: 10 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.productName}>{opt.label}</Text>
+                  <Text style={styles.muted}>{opt.detail}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
         <Pressable testID="save-tx-settings" disabled={busy} onPress={save} style={[styles.primaryButton, busy && { opacity: 0.5 }]}>
           {busy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.primaryButtonText}>Simpan pengaturan</Text>}

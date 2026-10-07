@@ -553,9 +553,11 @@ export default function KasirScreen() {
             const txId = (result.data as { id?: string } | null)?.id;
 
             // Auto-cetak order dapur (kitchen printer) kalau ada item tag dapur
+            // Skip kalau pengaturan: cetak bersamaan preview (sudah dicetak di preview button)
             try {
               const kitchenItems = appliedCart.filter((i) => i.kitchen_print);
-              if (kitchenItems.length && settings && !result.queued) {
+              const kitchenTiming = settings?.kitchen_print_timing || "after";
+              if (kitchenItems.length && settings && !result.queued && kitchenTiming !== "with_preview") {
                 const { printKitchenOrder, getKitchenPrinter } = await import("@/src/bt-printer");
                 const kitchenPrinter = await getKitchenPrinter();
                 if (kitchenPrinter) {
@@ -619,6 +621,7 @@ function CheckoutSheet({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [priceText, setPriceText] = useState("");
   const [qtyEditing, setQtyEditing] = useState<string | null>(null);
   const [discEditor, setDiscEditor] = useState<null | { lineId: string; item: CartItem }>(null);
 
@@ -694,30 +697,35 @@ function CheckoutSheet({
                           testID={`edit-price-${key}`}
                           keyboardType="number-pad"
                           autoFocus
-                          defaultValue={String(Math.round(Number(item.price) || 0))}
-                          onBlur={(e) => {
-                            try {
-                              const raw = String(e?.nativeEvent?.text ?? "").replace(/\D/g, "");
-                              const num = Number(raw);
-                              if (Number.isFinite(num) && num >= 0) changePrice(key, num);
-                            } catch { /* ignore */ }
-                            setEditing(null);
+                          value={priceText}
+                          onChangeText={(t) => {
+                            const digits = String(t).replace(/\D/g, "");
+                            setPriceText(digits);
+                            const num = Number(digits);
+                            if (Number.isFinite(num) && num >= 0) changePrice(key, num);
                           }}
-                          onSubmitEditing={(e) => {
-                            try {
-                              const raw = String(e?.nativeEvent?.text ?? "").replace(/\D/g, "");
-                              const num = Number(raw);
-                              if (Number.isFinite(num) && num >= 0) changePrice(key, num);
-                            } catch { /* ignore */ }
-                            setEditing(null);
-                          }}
+                          onBlur={() => setEditing(null)}
+                          onSubmitEditing={() => setEditing(null)}
+                          placeholder="Harga manual"
+                          placeholderTextColor={colors.muted}
                           style={[styles.input, { marginBottom: 0, flex: 1, minHeight: 36 }]}
                         />
+                        <Pressable onPress={() => setEditing(null)} style={styles.iconButton}>
+                          <Ionicons name="checkmark" size={18} color={colors.success} />
+                        </Pressable>
                       </View>
                     ) : (
-                      <Pressable onPress={() => setEditing(key)}>
-                        <Text style={styles.muted}>{formatRupiah(item.price)} × {fmtQty(item.quantity)} · ketuk harga</Text>
-                      </Pressable>
+                      (settings?.allow_price_edit ?? true) ? (
+                        <Pressable
+                          testID={`price-tap-${key}`}
+                          onPress={() => { setPriceText(String(Math.round(Number(item.price) || 0))); setEditing(key); }}
+                          hitSlop={8}
+                        >
+                          <Text style={styles.muted}>{formatRupiah(item.price)} × {fmtQty(item.quantity)} · ketuk harga</Text>
+                        </Pressable>
+                      ) : (
+                        <Text style={styles.muted}>{formatRupiah(item.price)} × {fmtQty(item.quantity)}</Text>
+                      )
                     )}
                     <Pressable
                       testID={`edit-discount-${key}`}
@@ -922,6 +930,22 @@ function CheckoutSheet({
                       };
                       await printReceipt(fakeTx, settings, { openCashDrawer: settings.cashdrawer_enabled, preview: true });
                       toast.success("Struk tercetak", `${paired.name} · ${settings.receipt_width}`);
+                      // Jika pengaturan: cetak dapur BERSAMA preview → cetak sekarang juga.
+                      if (settings.kitchen_print_timing === "with_preview") {
+                        try {
+                          const kitchenItems = items.filter((i) => i.kitchen_print);
+                          if (kitchenItems.length) {
+                            const { printKitchenOrder, getKitchenPrinter } = await import("@/src/bt-printer");
+                            const kp = await getKitchenPrinter();
+                            if (kp) {
+                              await printKitchenOrder(fakeTx as TransactionDoc, settings);
+                              toast.success("Order dapur dicetak", `${kitchenItems.length} item ke ${kp.name}`);
+                            }
+                          }
+                        } catch (kerr) {
+                          toast.info("Dapur tidak tercetak", kerr instanceof Error ? kerr.message : "cek printer dapur");
+                        }
+                      }
                       return;
                     }
                   } catch (printErr) {

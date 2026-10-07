@@ -23,7 +23,6 @@ const SECTIONS: Section[] = [
     short: "Pengaturan awal dalam 5 menit",
     body: [
       { heading: "Masuk pertama kali", text: "Login default: username `admin` password `admin`. Segera ganti password dari menu Lainnya → Profil & Password." },
-      { heading: "Password darurat", text: "Kalau lupa password, tekan \"Lupa password? Masuk darurat\" di layar login. Masukkan password darurat `kasirjtpoin` → langsung diarahkan ke pengaturan profil untuk set password baru tanpa perlu password lama." },
       { heading: "Lengkapi profil toko", text: "Lainnya → Pengaturan toko & struk. Isi nama toko, alamat, telepon, upload logo (persegi/persegi panjang) — logo otomatis dicetak di struk thermal." },
       { heading: "Tambah produk", text: "Tab Stok → tombol +. Isi nama, harga pokok, harga jual, dan stok. Untuk produk jasa (tanpa stok), pilih tipe Jasa." },
       { heading: "Atur metode pembayaran", text: "Lainnya → Metode pembayaran. Aktifkan Tunai, Kredit, QRIS statis, atau tambah kustom (Transfer BCA, OVO, GoPay, dll). Metode yang dipilih di sini otomatis muncul di Kasir, Pembelian, dan Transaksi Biaya." },
@@ -177,7 +176,6 @@ const SECTIONS: Section[] = [
     title: "FAQ & Troubleshoot",
     short: "Jawaban pertanyaan umum",
     body: [
-      { heading: "Lupa password owner?", text: "Dari layar login tekan \"Lupa password? Masuk darurat\". Password darurat `kasirjtpoin` → otomatis masuk & diarahkan ke pengaturan untuk set password baru." },
       { heading: "Kenapa harus backup?", text: "Semua data cuma di 1 HP (tidak di server). Kehilangan/kerusakan HP = data hilang. Rutin ekspor ZIP ke tempat aman (WA sendiri, email, Google Drive)." },
       { heading: "Printer thermal tidak terdeteksi?", text: "1) Pakai APK Android native (bukan Expo Go). 2) Nyalakan Bluetooth HP + izin lokasi. 3) Pair printer dulu di Pengaturan Bluetooth Android (PIN umum: 0000 / 1234). 4) Buka Lainnya → Printer Bluetooth → Scan → pilih printer → Cetak uji." },
       { heading: "Ganti logo struk?", text: "Lainnya → Pengaturan toko & struk → upload Logo. Format bebas (persegi/persegi panjang). Rekomendasi: PNG background putih, lebar ≥ 300px." },

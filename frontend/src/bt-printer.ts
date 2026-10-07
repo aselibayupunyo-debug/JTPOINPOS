@@ -309,7 +309,8 @@ export async function printReceipt(
     } catch { /* abaikan logo kalau gagal konversi */ }
   }
 
-  b.align("center").bold(true).double(true).line(settings.business_name).double(false).bold(false);
+  // Nama toko (bold normal, bukan double size agar tidak terlalu besar)
+  b.align("center").bold(true).line(settings.business_name).bold(false);
   const headerLines = (settings.header_lines ?? []).filter(Boolean).slice(0, 4);
   if (headerLines.length) headerLines.forEach((l) => b.line(l));
   else {

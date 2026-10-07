@@ -206,6 +206,7 @@ export type BusinessSettings = {
   price_levels?: PriceLevel[];
   enabled_payment_kinds?: string[];
   email_recipient?: string;
+  kitchen_print_timing?: "after" | "with_preview";
 };
 
 export const PAYMENT_KIND_LABELS: Record<PaymentKind, string> = {
