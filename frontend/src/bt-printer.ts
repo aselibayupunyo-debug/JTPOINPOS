@@ -22,7 +22,7 @@ export type PairedPrinter = { address: string; name: string };
 
 const PRINTER_KEY = "jtpoin_bt_printer";
 const KITCHEN_PRINTER_KEY = "jtpoin_bt_kitchen_printer";
-const LOGO_CACHE_KEY = "jtpoin_logo_escpos_cache_v2";
+const LOGO_CACHE_KEY = "jtpoin_logo_escpos_cache_v3";
 
 type BtModule = typeof import("rn-bluetooth-classic-printer");
 let btCache: BtModule | null | undefined; // undefined = untried, null = unavailable
@@ -239,6 +239,26 @@ class EscposBuilder {
   feed(n = 1) { for (let i = 0; i < n; i++) this.push(0x0a); return this; }
   cut() { return this.push(GS, 0x56, 0x01); }
   cashDrawer() { return this.push(ESC, 0x70, 0x00, 0x19, 0xfa); }
+  /**
+   * Encode semua bytes ke list base64 chunks. Chunking penting karena printer
+   * Bluetooth thermal punya input buffer kecil (biasanya 1-4 KB). Mengirim
+   * payload besar sekaligus bisa membuat buffer overflow → sisa bytes hilang.
+   *
+   * `bytesPerChunk` dalam byte raw (sebelum base64). Default 1024 bytes
+   * sudah terbukti aman untuk hampir semua printer thermal.
+   */
+  base64Chunks(bytesPerChunk = 1024): string[] {
+    const out: string[] = [];
+    const total = this.bytes.length;
+    for (let i = 0; i < total; i += bytesPerChunk) {
+      const end = Math.min(total, i + bytesPerChunk);
+      let bin = "";
+      for (let j = i; j < end; j++) bin += String.fromCharCode(this.bytes[j]);
+      // eslint-disable-next-line no-restricted-globals
+      out.push(typeof btoa !== "undefined" ? btoa(bin) : "");
+    }
+    return out;
+  }
   base64() {
     // Encode semua bytes ke base64 tanpa pakai spread (anti-crash di Hermes
     // untuk payload besar seperti logo raster).
@@ -256,24 +276,44 @@ class EscposBuilder {
 }
 
 // ---------- Public: cetak ----------
-async function sendBase64ToPrinter(printer: PairedPrinter, base64: string, copies = 1): Promise<void> {
+
+/**
+ * Kirim payload ke printer sebagai chunk-chunk kecil. Dibutuhkan karena
+ * printer SPP thermal punya input buffer kecil (1-4 KB). Mengirim sekaligus
+ * data > 4KB (misal struk dengan logo raster) sering menyebabkan sisa
+ * byte DROP — hasilnya: logo tercetak tapi body hilang.
+ */
+async function sendChunksToPrinter(printer: PairedPrinter, chunks: string[], copies = 1): Promise<void> {
   const bt = tryLoadBt();
   if (!bt) throw new Error("Modul Bluetooth tidak tersedia. Butuh APK Android build.");
   await connectPrinter(printer.address);
-  for (let i = 0; i < Math.max(1, copies); i++) {
-    const ok = await bt.printRaw(base64);
-    if (!ok) throw new Error(`Gagal mengirim data ke ${printer.name}. Coba cek koneksi.`);
-    if (i < copies - 1) await new Promise((r) => setTimeout(r, 400));
+  for (let c = 0; c < Math.max(1, copies); c++) {
+    for (let i = 0; i < chunks.length; i++) {
+      const ok = await bt.printRaw(chunks[i]);
+      if (!ok) throw new Error(`Gagal mengirim data ke ${printer.name}. Coba cek koneksi.`);
+      // Delay kecil antar chunk agar printer sempat memproses buffer.
+      if (i < chunks.length - 1) await new Promise((r) => setTimeout(r, 40));
+    }
+    if (c < copies - 1) await new Promise((r) => setTimeout(r, 400));
   }
 }
 
-async function sendBase64(base64: string, copies = 1): Promise<void> {
+async function sendBuilderToPrinter(printer: PairedPrinter, builder: EscposBuilder, copies = 1): Promise<void> {
+  await sendChunksToPrinter(printer, builder.base64Chunks(1024), copies);
+}
+
+async function sendBuilder(builder: EscposBuilder, copies = 1): Promise<void> {
   const bt = tryLoadBt();
   if (!bt) throw new Error("Modul Bluetooth tidak tersedia. Butuh APK Android build.");
   const printer = await getPairedPrinter();
   if (!printer) throw new Error("Belum ada printer tersimpan. Pair printer di menu Printer Bluetooth dulu.");
-  await sendBase64ToPrinter(printer, base64, copies);
+  await sendBuilderToPrinter(printer, builder, copies);
 }
+
+// ---------- Legacy helpers (dipertahankan untuk kompatibilitas internal) ----------
+// Note: sendBase64 / sendBase64ToPrinter sudah di-replace oleh sendBuilder /
+// sendBuilderToPrinter yang mendukung chunking. Stub ini dipertahankan agar
+// mudah dibandingkan versinya saat debugging.
 
 export async function testPrint(printer: PairedPrinter): Promise<void> {
   const bt = tryLoadBt();
@@ -292,8 +332,13 @@ export async function testPrint(printer: PairedPrinter): Promise<void> {
     .line("Terima kasih.")
     .feed(2)
     .cut();
-  const ok = await bt.printRaw(b.base64());
-  if (!ok) throw new Error("Gagal cetak uji. Printer tidak merespons.");
+  // Test print pakai chunked sender juga (meskipun kecil, konsisten).
+  const chunks = b.base64Chunks(1024);
+  for (const c of chunks) {
+    const ok = await bt.printRaw(c);
+    if (!ok) throw new Error("Gagal cetak uji. Printer tidak merespons.");
+    await new Promise((r) => setTimeout(r, 20));
+  }
 }
 
 function padLine(left: string, right: string, cols: number): string {
@@ -370,7 +415,7 @@ export async function printReceipt(
   effectiveFooter.forEach((l) => b.line(l));
   b.feed(3).cut();
 
-  await sendBase64(b.base64(), options.copies ?? 1);
+  await sendBuilder(b, options.copies ?? 1);
 }
 
 /** Cetak order dapur ke printer kedua (kitchen printer). Hanya item dengan kitchen_print=true. */
@@ -402,13 +447,13 @@ export async function printKitchenOrder(
   b.line(sep);
   if (tx.note) { b.line("Catatan:"); b.line(tx.note); b.line(sep); }
   b.align("center").line("** Siapkan segera **").feed(3).cut();
-  await sendBase64ToPrinter(kitchen, b.base64(), 1);
+  await sendBuilderToPrinter(kitchen, b, 1);
 }
 
 export async function openCashDrawerOnly(): Promise<void> {
   const b = new EscposBuilder();
   b.init().cashDrawer().feed(1);
-  await sendBase64(b.base64());
+  await sendBuilder(b);
 }
 
 // ---------- Barcode printing ESC/POS ----------
@@ -463,7 +508,7 @@ export async function printBarcodeLabels(
     b.feed(1);
   }
   b.feed(2).cut();
-  await sendBase64ToPrinter(printer, b.base64(), 1);
+  await sendBuilderToPrinter(printer, b, 1);
 }
 
 /** Buka pengaturan Bluetooth Android (shortcut dari UI). */

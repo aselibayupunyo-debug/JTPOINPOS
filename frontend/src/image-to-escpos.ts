@@ -16,6 +16,12 @@ const GS = 0x1d;
 
 export type PaperWidth = "58mm" | "80mm";
 
+// Printer thermal 203 DPI → 1 cm = 80 dots.
+// User requirement: logo persegi max 3×3 cm, persegi panjang max 4 cm sisi terpanjang.
+const DOTS_PER_CM = 80;
+const LOGO_MAX_WIDTH = 4 * DOTS_PER_CM;  // 320 dots (4 cm)
+const LOGO_MAX_HEIGHT = 3 * DOTS_PER_CM; // 240 dots (3 cm)
+
 export function targetWidthPx(paper: PaperWidth): number {
   // Resolusi standar printer thermal 203 DPI.
   // 58mm printable area ~48mm → 384 dots. 80mm printable area ~72mm → 576 dots.
@@ -35,35 +41,64 @@ function base64ToUint8(b64: string): Uint8Array {
  * Hasilkan ESC/POS raster bytes dari base64 image.
  * `logoBase64` boleh berupa raw base64 atau data URL (`data:image/...;base64,...`).
  * Return null jika gagal (format tidak didukung / modul tidak tersedia).
+ *
+ * Ukuran logo di struk dibatasi:
+ *  - Max 320 dots (4 cm) di sisi terpanjang
+ *  - Max 240 dots (3 cm) di sisi terpendek jika persegi
+ *  - Aspect ratio asli selalu dipertahankan (tidak gepeng)
  */
 export async function escposFromImageBase64(
   logoBase64: string,
-  paper: PaperWidth,
+  _paper: PaperWidth,
 ): Promise<Uint8Array | null> {
   if (!logoBase64) return null;
-  const target = targetWidthPx(paper);
 
   // 1. Normalisasi menjadi data URL untuk expo-image-manipulator
   const dataUrl = logoBase64.startsWith("data:")
     ? logoBase64
     : `data:image/png;base64,${logoBase64}`;
 
-  // 2. Resize ke target width + konversi ke PNG
+  // 2. Resize ke bounding box LOGO_MAX_WIDTH × LOGO_MAX_HEIGHT, preserve aspect
   let pngBase64: string;
   try {
-    // SDK baru: ImageManipulator.manipulate(...) → saveAsync
-    // SDK lama: ImageManipulator.manipulateAsync(uri, actions, saveOptions)
     const mod = ImageManipulator as any;
+    // Step 1: probe dimensi asli (resize no-op, cuma untuk ambil width/height).
+    let origW = 0, origH = 0;
+    if (typeof mod.manipulateAsync === "function") {
+      const probe = await mod.manipulateAsync(dataUrl, [], {
+        base64: false,
+        format: mod.SaveFormat?.PNG ?? "png",
+        compress: 1,
+      });
+      origW = probe.width || 0;
+      origH = probe.height || 0;
+    }
+    if (!origW || !origH) {
+      // Fallback: pakai paper width kalau probe gagal
+      origW = LOGO_MAX_WIDTH;
+      origH = LOGO_MAX_HEIGHT;
+    }
+
+    // Hitung target ukuran yang pas di dalam bounding box tanpa distorsi.
+    const scaleW = LOGO_MAX_WIDTH / origW;
+    const scaleH = LOGO_MAX_HEIGHT / origH;
+    // Pakai scale yang lebih kecil → fit inside box. Cap scale max 2.0 agar
+    // tidak terlalu pecah untuk gambar kecil.
+    const scale = Math.min(scaleW, scaleH, 2.0);
+    const targetW = Math.max(32, Math.round(origW * scale));
+    const targetH = Math.max(32, Math.round(origH * scale));
+
+    // Step 2: resize ke target eksak.
     if (typeof mod.manipulateAsync === "function") {
       const result = await mod.manipulateAsync(
         dataUrl,
-        [{ resize: { width: target } }],
+        [{ resize: { width: targetW, height: targetH } }],
         { base64: true, format: mod.SaveFormat?.PNG ?? "png", compress: 1 },
       );
       pngBase64 = result.base64 as string;
     } else if (typeof mod.manipulate === "function") {
       const img = mod.manipulate(dataUrl);
-      await img.resize({ width: target });
+      await img.resize({ width: targetW, height: targetH });
       const saved = await img.saveAsync({ base64: true, format: mod.SaveFormat?.PNG ?? "png", compress: 1 });
       pngBase64 = saved.base64 as string;
     } else {
