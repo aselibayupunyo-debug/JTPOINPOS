@@ -623,6 +623,7 @@ function CheckoutSheet({
   const [editing, setEditing] = useState<string | null>(null);
   const [priceText, setPriceText] = useState("");
   const [qtyEditing, setQtyEditing] = useState<string | null>(null);
+  const [qtyDraft, setQtyDraft] = useState<string>("");
   const [discEditor, setDiscEditor] = useState<null | { lineId: string; item: CartItem }>(null);
 
   const fmtQty = (q: number): string => {
@@ -630,6 +631,26 @@ function CheckoutSheet({
     if (!Number.isFinite(n)) return "0";
     // Show up to 2 decimals, strip trailing zeros
     return n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+  };
+
+  // Normalisasi input kuantitas: terima koma/titik, maks 2 desimal,
+  // simpan dalam state draft agar user bebas mengetik "0,", "2,5" dsb.
+  const normalizeQtyInput = (raw: string): { display: string; value: number | null } => {
+    // Buang karakter selain digit/koma/titik, pakai separator pertama saja
+    let s = String(raw ?? "").replace(/[^\d.,]/g, "");
+    // Gabungkan multi-separator (hanya ambil yang pertama)
+    const firstSep = s.search(/[.,]/);
+    if (firstSep >= 0) {
+      const head = s.slice(0, firstSep).replace(/[.,]/g, "");
+      const sep = s[firstSep] === "," ? "," : ",";
+      const tail = s.slice(firstSep + 1).replace(/[.,]/g, "").slice(0, 2);
+      s = tail.length > 0 ? `${head}${sep}${tail}` : `${head}${sep}`;
+    }
+    // Cegah leading zero berlebih tapi izinkan "0" dan "0,"
+    if (/^0\d/.test(s)) s = s.replace(/^0+/, "");
+    if (s === "") return { display: "", value: null };
+    const numeric = Number(s.replace(",", "."));
+    return { display: s, value: Number.isFinite(numeric) ? numeric : null };
   };
   const [discType, setDiscType] = useState<"amount" | "percent">("amount");
   const [discValue, setDiscValue] = useState("");
@@ -749,33 +770,38 @@ function CheckoutSheet({
                         testID={`qty-input-${key}`}
                         keyboardType="decimal-pad"
                         autoFocus
-                        defaultValue={String(Number(item.quantity) || 0)}
+                        value={qtyDraft}
                         selectTextOnFocus
-                        onBlur={(e) => {
-                          try {
-                            const raw = String(e?.nativeEvent?.text ?? "").replace(",", ".").replace(/[^\d.]/g, "");
-                            // Keep max 2 decimals
-                            const match = raw.match(/^(\d*)(\.(\d{0,2}))?/);
-                            const normalized = match ? `${match[1] || "0"}${match[2] ? "." + (match[3] || "") : ""}` : raw;
-                            const num = Number(normalized);
-                            if (Number.isFinite(num) && num > 0) setQty(key, num);
-                          } catch { /* ignore malformed input */ }
-                          setQtyEditing(null);
+                        onChangeText={(t) => {
+                          const { display, value } = normalizeQtyInput(t);
+                          setQtyDraft(display);
+                          if (value !== null && value > 0) setQty(key, value);
                         }}
-                        onSubmitEditing={(e) => {
-                          try {
-                            const raw = String(e?.nativeEvent?.text ?? "").replace(",", ".").replace(/[^\d.]/g, "");
-                            const match = raw.match(/^(\d*)(\.(\d{0,2}))?/);
-                            const normalized = match ? `${match[1] || "0"}${match[2] ? "." + (match[3] || "") : ""}` : raw;
-                            const num = Number(normalized);
-                            if (Number.isFinite(num) && num > 0) setQty(key, num);
-                          } catch { /* ignore */ }
+                        onBlur={() => {
+                          // Commit nilai draft terakhir (kalau user hapus semua, biarkan jumlah terakhir)
+                          const { value } = normalizeQtyInput(qtyDraft);
+                          if (value !== null && value > 0) setQty(key, value);
                           setQtyEditing(null);
+                          setQtyDraft("");
                         }}
+                        onSubmitEditing={() => {
+                          const { value } = normalizeQtyInput(qtyDraft);
+                          if (value !== null && value > 0) setQty(key, value);
+                          setQtyEditing(null);
+                          setQtyDraft("");
+                        }}
+                        placeholder="Qty"
+                        placeholderTextColor={colors.muted}
                         style={{ minWidth: 56, maxWidth: 86, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary, paddingVertical: 2 }}
                       />
                     ) : (
-                      <Pressable testID={`qty-edit-${key}`} onPress={() => setQtyEditing(key)}>
+                      <Pressable
+                        testID={`qty-edit-${key}`}
+                        onPress={() => {
+                          setQtyDraft(fmtQty(item.quantity));
+                          setQtyEditing(key);
+                        }}
+                      >
                         <Text style={{ minWidth: 36, paddingHorizontal: 2, textAlign: "center", color: colors.onSurface, fontWeight: "700" }}>{fmtQty(item.quantity)}</Text>
                       </Pressable>
                     )}
