@@ -28,7 +28,7 @@ load_dotenv(ROOT_DIR / ".env")
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
-JWT_SECRET = os.getenv("JWT_SECRET", "kasirku-local-development-secret")
+JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "kasirku-local-dev-" + os.urandom(16).hex()
 JWT_ALGORITHM = "HS256"
 security = HTTPBearer(auto_error=False)
 

@@ -67,7 +67,6 @@
       "expo-status-bar",
       "expo-sqlite",
       "expo-sharing",
-      "expo-zeroconf",
       "expo-audio"
     ],
     "experiments": {
