@@ -142,3 +142,13 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 61. **Pola keamanan**: Login username/password seperti biasa, token di Authorization header. Mode `client` tanpa server hidup → throw `LanOfflineError` → kasir tidak bisa jualan (data konsisten > fleksibilitas).
 
 **Catatan**: Fitur ini **HANYA jalan di build APK/IPA native** — `react-native-tcp-socket` dan `expo-zeroconf` adalah native modules.
+
+## Session 2026-10 (Iter 17) — USB Barcode Scanner Global Capture
+62. **Komponen `UsbScannerListener`** di `src/hooks/use-usb-scanner.tsx`: menangkap input dari USB barcode scanner secara global tanpa user perlu memberi fokus ke kolom pencarian.
+    - **Native (Android/iOS)**: hidden TextInput (`position:absolute`, opacity 0, 1x1 px) dengan `autoFocus` + `showSoftInputOnFocus=false` (Android-only prop). `onSubmitEditing` → trigger `onScan(code)` + clear input + re-focus untuk scan berikutnya. `onBlur` tidak merebut focus kalau ada TextInput lain aktif (`TextInput.State.currentlyFocusedInput()`).
+    - **Web**: `document.addEventListener("keydown")` dengan timing-based detection (gap antar-tombol <100ms = scanner, Enter → emit scan). Dilewati kalau user sedang di `<input>/<textarea>/contenteditable`.
+63. **Integrasi di kasir**: `(tabs)/index.tsx` mount `<UsbScannerListener active={!scanner && !checkout && !parkPromptOpen && !cancelConfirmOpen && !unitPicker} onScan={onBarcode} />` — nonaktif otomatis saat modal apapun terbuka agar tidak menabrak input modal.
+64. **`onBarcode()` ditingkatkan**: setelah berhasil match produk → `addToCart(match)` + `setSearch("")` agar scan berikutnya langsung bersih. Trim whitespace & abaikan code kosong.
+
+**Catatan**: USB scanner connected via OTG → bertindak sebagai HID keyboard di Android, langsung bekerja dengan hidden TextInput. Tidak butuh library tambahan.
+

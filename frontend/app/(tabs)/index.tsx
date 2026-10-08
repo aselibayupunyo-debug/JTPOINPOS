@@ -11,6 +11,7 @@ import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { SyncBanner } from "@/src/components/sync-banner";
+import { UsbScannerListener } from "@/src/hooks/use-usb-scanner";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -220,13 +221,16 @@ export default function KasirScreen() {
 
   const onBarcode = (data: string) => {
     setScanner(false);
-    const match = products.find((p) => p.barcode === data || p.sku === data);
+    const code = String(data || "").trim();
+    if (!code) return;
+    const match = products.find((p) => p.barcode === code || p.sku === code);
     if (match) {
       addToCart(match);
+      setSearch(""); // bersihkan kotak pencarian supaya scan berikutnya siap
       toast.success("Barcode terdeteksi", match.name);
     } else {
-      setSearch(data);
-      toast.info("Barcode belum terdaftar", data);
+      setSearch(code);
+      toast.info("Barcode belum terdaftar", code);
     }
   };
 
@@ -277,6 +281,13 @@ export default function KasirScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
+      {/* Scanner USB global — menangkap input dari barcode scanner USB
+          tanpa user perlu memberi fokus ke kolom pencarian. Aktif selama
+          tidak ada modal yang terbuka. */}
+      <UsbScannerListener
+        active={!scanner && !checkout && !parkPromptOpen && !cancelConfirmOpen && !unitPicker}
+        onScan={onBarcode}
+      />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
