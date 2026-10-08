@@ -47,6 +47,8 @@ export default function RootLayout() {
                     <Stack.Screen name="barcode-print" />
                     <Stack.Screen name="shifts" />
                     <Stack.Screen name="promos" />
+                    <Stack.Screen name="lan-sync" />
+                    <Stack.Screen name="tailscale-guide" />
                   </Stack>
                 </AuthProvider>
               </SyncProvider>

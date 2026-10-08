@@ -1,10 +1,14 @@
 /**
- * API wrapper untuk JTPOIN POS — 100% offline.
+ * API wrapper untuk JTPOIN POS.
  *
- * Semua request diteruskan ke `local-backend/index.ts` (SQLite di perangkat).
- * Tidak ada koneksi jaringan ke server luar. Interface fungsi dipertahankan
- * agar screens yang sudah ada tidak perlu diubah.
+ * Routing dinamis berdasarkan `DeviceMode` (lihat `src/lan-sync/device-mode.ts`):
+ * - "mandiri" / "server" → `localFetch` (SQLite di perangkat)
+ * - "client" → `remoteFetch` (HTTP ke Server Utama via LAN/Tailscale)
+ *
+ * Interface fungsi dipertahankan agar screens yang sudah ada tidak perlu diubah.
  */
+import { getLanConfig } from "@/src/lan-sync/device-mode";
+import { remoteFetch, LanOfflineError } from "@/src/lan-sync/http-client";
 import { localFetch } from "@/src/local-backend";
 import { storage } from "@/src/utils/storage";
 
@@ -245,6 +249,25 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
   const method = parseMethod(options.method);
   const body = parseBody(options.body as any);
+
+  // Routing berdasarkan mode device:
+  // - "client": semua request diteruskan ke Server Utama via HTTP
+  // - "mandiri"/"server": pakai database lokal
+  const cfg = await getLanConfig();
+  if (cfg.mode === "client") {
+    try {
+      const res = await remoteFetch({ method, path, body, token });
+      if (res.status >= 400) {
+        const detail = (res.data && typeof res.data === "object" && "detail" in res.data) ? String((res.data as any).detail) : "Terjadi kesalahan";
+        throw new Error(detail);
+      }
+      return res.data as T;
+    } catch (e) {
+      if (e instanceof LanOfflineError) throw e;
+      throw e;
+    }
+  }
+
   const res = await localFetch({ method, path, body, token });
   if (res.status >= 400) {
     const detail = (res.data && typeof res.data === "object" && "detail" in res.data) ? String(res.data.detail) : "Terjadi kesalahan";

@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { apiRequest, clearToken, hasPermission, Permission, saveToken, User } from "@/src/api";
+import { getLanConfig, publishLanService, startLanSyncServer } from "@/src/lan-sync";
 import { initLocalBackend } from "@/src/local-backend";
 import { storage } from "@/src/utils/storage";
 
@@ -42,6 +43,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         new Promise((r) => setTimeout(r, 5000)),
       ]);
       if (cancelled) return;
+
+      // Auto-start mini HTTP server kalau mode = "server".
+      // Dibungkus try/catch & timeout — kalau native module tidak tersedia
+      // (web preview / Expo Go), boot tetap lanjut tanpa server.
+      try {
+        const cfg = await getLanConfig();
+        if (cfg.mode === "server") {
+          await Promise.race([
+            startLanSyncServer(cfg.server_port).catch(() => undefined),
+            new Promise((r) => setTimeout(r, 3000)),
+          ]);
+          publishLanService(cfg.device_name || "JTPOIN Server", cfg.server_port).catch(() => undefined);
+        }
+      } catch { /* ignore */ }
+
       const token = await storage.secureGet<string | null>("kasirku_auth_token", null);
       if (token) {
         await Promise.race([

@@ -12,7 +12,9 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Scan barcode produk dengan kamera.",
         "NSPhotoLibraryUsageDescription": "Pilih foto produk untuk katalog.",
-        "NSBluetoothAlwaysUsageDescription": "Hubungkan printer kasir dan dapur."
+        "NSBluetoothAlwaysUsageDescription": "Hubungkan printer kasir dan dapur.",
+        "NSLocalNetworkUsageDescription": "Terhubung dengan HP server kasir di jaringan lokal.",
+        "NSBonjourServices": ["_jtpoin._tcp"]
       },
       "bundleIdentifier": "com.emergent.kasirandroidpro.ijd6qs"
     },
@@ -24,8 +26,13 @@
         "BLUETOOTH_SCAN",
         "BLUETOOTH_CONNECT",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_MULTICAST_STATE"
       ],
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
@@ -57,7 +64,8 @@
       "expo-web-browser",
       "expo-status-bar",
       "expo-sqlite",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-zeroconf"
     ],
     "experiments": {
       "typedRoutes": true
