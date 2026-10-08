@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, Contact, formatRupiah, PaymentMethod, PaymentMethodDoc, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
+import { formatQtyID, normalizeQtyInput } from "@/src/qty-input";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -40,6 +41,7 @@ export default function PurchaseScreen() {
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState(false);
   const [unitPicker, setUnitPicker] = useState<null | { product: Product; options: { name: string; factor: number; cost: number }[] }>(null);
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
 
   useEffect(() => {
     apiRequest<Product[]>("/products").then(setProducts).catch(() => undefined);
@@ -91,6 +93,11 @@ export default function PurchaseScreen() {
 
   const update = (lineId: string, patch: Partial<Line>) =>
     setLines((c) => c.map((l) => l.line_id === lineId ? { ...l, ...patch } : l).filter((l) => l.quantity > 0));
+
+  const commitQty = (lineId: string, next: number) => {
+    const rounded = Math.max(0, Math.round(next * 100) / 100);
+    update(lineId, { quantity: rounded });
+  };
 
   const submit = async () => {
     if (!lines.length) return toast.error("Belum ada item");
@@ -159,14 +166,34 @@ export default function PurchaseScreen() {
                 <View style={[styles.row, { marginTop: 8, gap: 10 }]}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.muted}>Qty</Text>
-                    <TextInput testID={`purchase-qty-${l.line_id}`} value={String(l.quantity)} onChangeText={(t) => update(l.line_id, { quantity: Number(t) || 0 })} keyboardType="number-pad" style={[styles.input, { marginBottom: 0 }]} />
+                    <TextInput
+                      testID={`purchase-qty-${l.line_id}`}
+                      value={qtyDraft[l.line_id] ?? formatQtyID(l.quantity)}
+                      onChangeText={(t) => {
+                        const { display, value } = normalizeQtyInput(t);
+                        setQtyDraft((d) => ({ ...d, [l.line_id]: display }));
+                        if (value !== null && value > 0) commitQty(l.line_id, value);
+                      }}
+                      onBlur={() => {
+                        const draft = qtyDraft[l.line_id];
+                        if (draft !== undefined) {
+                          const { value } = normalizeQtyInput(draft);
+                          if (value !== null && value > 0) commitQty(l.line_id, value);
+                        }
+                        setQtyDraft((d) => { const n = { ...d }; delete n[l.line_id]; return n; });
+                      }}
+                      keyboardType="decimal-pad"
+                      placeholder="0"
+                      placeholderTextColor={colors.muted}
+                      style={[styles.input, { marginBottom: 0 }]}
+                    />
                   </View>
                   <View style={{ flex: 2 }}>
                     <Text style={styles.muted}>Harga pokok / {l.unit}</Text>
                     <TextInput testID={`purchase-price-${l.line_id}`} value={String(l.price)} onChangeText={(t) => update(l.line_id, { price: Number(t.replace(/\D/g, "")) || 0, cost: Number(t.replace(/\D/g, "")) || 0 })} keyboardType="number-pad" style={[styles.input, { marginBottom: 0 }]} />
                   </View>
                 </View>
-                <Text style={[styles.muted, { marginTop: 6 }]}>Subtotal: {formatRupiah(l.price * l.quantity)}{l.product_type === "goods" && l.unit_factor !== 1 ? ` · +${l.quantity * l.unit_factor} stok dasar` : ""}</Text>
+                <Text style={[styles.muted, { marginTop: 6 }]}>Subtotal: {formatRupiah(l.price * l.quantity)}{l.product_type === "goods" && l.unit_factor !== 1 ? ` · +${formatQtyID(l.quantity * l.unit_factor)} stok dasar` : ""}</Text>
               </View>
             ))}
             <View style={[styles.between, { paddingTop: 12 }]}>

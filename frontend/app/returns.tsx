@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, formatRupiah, PaymentMethodDoc, Product } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
+import { formatQtyID, normalizeQtyInput } from "@/src/qty-input";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -28,6 +29,7 @@ export default function ReturnsScreen() {
   const [note, setNote] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
 
   useEffect(() => {
     apiRequest<Product[]>("/products").then((list) => setProducts(list.filter((p) => (p.product_type || "goods") === "goods"))).catch(() => undefined);
@@ -45,12 +47,13 @@ export default function ReturnsScreen() {
     });
   };
   const setQty = (id: string, qty: number) => {
+    const rounded = Math.max(0, Math.round(qty * 100) / 100);
     setItems((prev) => {
       if (!prev[id]) return prev;
-      if (qty <= 0) {
+      if (rounded <= 0) {
         const next = { ...prev }; delete next[id]; return next;
       }
-      return { ...prev, [id]: { ...prev[id], qty } };
+      return { ...prev, [id]: { ...prev[id], qty: rounded } };
     });
   };
   const setPrice = (id: string, price: number) => {
@@ -143,10 +146,19 @@ export default function ReturnsScreen() {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
                     <Pressable onPress={() => setQty(l.product.id, l.qty - 1)} style={styles.iconButton}><Ionicons name="remove" size={14} color={colors.brandPrimary} /></Pressable>
                     <TextInput
-                      value={String(l.qty)}
+                      value={qtyDraft[l.product.id] ?? formatQtyID(l.qty)}
                       onChangeText={(t) => {
-                        const n = Number(String(t).replace(",", ".").replace(/[^\d.]/g, ""));
-                        if (Number.isFinite(n) && n >= 0) setQty(l.product.id, Math.round(n * 100) / 100);
+                        const { display, value } = normalizeQtyInput(t);
+                        setQtyDraft((d) => ({ ...d, [l.product.id]: display }));
+                        if (value !== null && value > 0) setQty(l.product.id, value);
+                      }}
+                      onBlur={() => {
+                        const draft = qtyDraft[l.product.id];
+                        if (draft !== undefined) {
+                          const { value } = normalizeQtyInput(draft);
+                          if (value !== null && value > 0) setQty(l.product.id, value);
+                        }
+                        setQtyDraft((d) => { const n = { ...d }; delete n[l.product.id]; return n; });
                       }}
                       keyboardType="decimal-pad"
                       style={{ width: 60, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary }}
@@ -173,7 +185,7 @@ export default function ReturnsScreen() {
 
       <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: 16, paddingBottom: insets.bottom + 16, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.divider }}>
         <View style={styles.between}>
-          <Text style={styles.muted}>{totalItems} barang</Text>
+          <Text style={styles.muted}>{formatQtyID(totalItems)} barang</Text>
           <Text style={[styles.cardTitle, { color: colors.brandPrimary }]}>{formatRupiah(total)}</Text>
         </View>
         <Pressable testID="submit-return" disabled={lines.length === 0} onPress={() => setConfirmOpen(true)} style={[styles.primaryButton, lines.length === 0 && { opacity: 0.4 }, { marginTop: 10 }]}>
@@ -189,7 +201,7 @@ export default function ReturnsScreen() {
               <Text style={[styles.cardTitle, { marginLeft: 10, flex: 1, fontSize: 20 }]}>Apakah anda yakin??</Text>
             </View>
             <Text style={[styles.muted, { marginBottom: 10 }]}>
-              Akan diretur {totalItems} barang senilai <Text style={{ fontWeight: "700", color: colors.onSurface }}>{formatRupiah(total)}</Text>.
+              Akan diretur {formatQtyID(totalItems)} barang senilai <Text style={{ fontWeight: "700", color: colors.onSurface }}>{formatRupiah(total)}</Text>.
               Stok otomatis akan {kind === "sale" ? "bertambah" : "berkurang"}.
             </Text>
 
