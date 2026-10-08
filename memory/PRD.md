@@ -152,3 +152,11 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 
 **Catatan**: USB scanner connected via OTG → bertindak sebagai HID keyboard di Android, langsung bekerja dengan hidden TextInput. Tidak butuh library tambahan.
 
+
+## Session 2026-10 (Iter 18) — Beep Audio + Scanner Toggle
+65. **Audio feedback** di `src/scanner-feedback.ts`: `playScanSuccess()` (2000Hz 90ms sine, soft envelope) & `playScanError()` (300Hz+250Hz dual tone 280ms) via `expo-audio` `createAudioPlayer`. Player instance di-cache (lazy init) agar replay instan tanpa delay. WAV digenerate via Python script (Attack 4ms, Release 30ms envelope untuk hilang click).
+66. **Inline base64 audio** di `src/scanner-feedback-sources.ts`: dua data URI base64 untuk WAV sources. Metro web bundling tidak bisa resolve `require('../../assets/sounds/*.wav')` → workaround pakai `{ uri: 'data:audio/wav;base64,...' }` yang kompatibel semua platform.
+67. **Toggle scanner** di header kasir (`(tabs)/index.tsx`): tombol dengan icon `barcode-outline` (aktif) / `barcode` + garis coret merah (nonaktif), posisi di sebelah tombol antrian. State di-persist via AsyncStorage key `jtpoin_scanner_enabled_v1` dengan getter/setter `getScannerEnabled()`/`setScannerEnabled()`. Default: aktif.
+68. **Integrasi feedback**: `onBarcode()` panggil `playScanSuccess()` saat match ditemukan & `playScanError()` saat barcode tak terdaftar. Toggle on/off juga memainkan beep konfirmasi & toast info.
+69. **UsbScannerListener dependency**: prop `active` sekarang digabung `scannerEnabled && !modal-apapun`. Kalau toggle off, hidden TextInput unmount → user bisa tap kolom pencarian & muncul soft keyboard untuk ketik manual tanpa gangguan scanner.
+

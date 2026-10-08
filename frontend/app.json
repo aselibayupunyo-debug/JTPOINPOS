@@ -14,7 +14,9 @@
         "NSPhotoLibraryUsageDescription": "Pilih foto produk untuk katalog.",
         "NSBluetoothAlwaysUsageDescription": "Hubungkan printer kasir dan dapur.",
         "NSLocalNetworkUsageDescription": "Terhubung dengan HP server kasir di jaringan lokal.",
-        "NSBonjourServices": ["_jtpoin._tcp"]
+        "NSBonjourServices": [
+          "_jtpoin._tcp"
+        ]
       },
       "bundleIdentifier": "com.emergent.kasirandroidpro.ijd6qs"
     },
@@ -65,7 +67,8 @@
       "expo-status-bar",
       "expo-sqlite",
       "expo-sharing",
-      "expo-zeroconf"
+      "expo-zeroconf",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true

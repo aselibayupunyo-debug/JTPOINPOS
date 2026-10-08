@@ -12,6 +12,7 @@ import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { SyncBanner } from "@/src/components/sync-banner";
 import { UsbScannerListener } from "@/src/hooks/use-usb-scanner";
+import { getScannerEnabled, playScanError, playScanSuccess, setScannerEnabled } from "@/src/scanner-feedback";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -47,7 +48,23 @@ export default function KasirScreen() {
   const [editingParkedId, setEditingParkedId] = useState<string | null>(null);
   const consumedParkedRef = useRef<Set<string>>(new Set());
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [scannerEnabled, setScannerEnabledState] = useState(true);
   const [permission, requestPermission] = useCameraPermissions();
+
+  useEffect(() => { getScannerEnabled().then(setScannerEnabledState); }, []);
+  const toggleScanner = useCallback(() => {
+    setScannerEnabledState((prev) => {
+      const next = !prev;
+      setScannerEnabled(next).catch(() => undefined);
+      if (next) {
+        playScanSuccess();
+        toast.success("Scanner USB aktif", "Scan barang akan langsung masuk keranjang");
+      } else {
+        toast.info("Scanner USB dimatikan", "Ketik manual di kolom pencarian");
+      }
+      return next;
+    });
+  }, [toast]);
 
   const load = useCallback(async () => {
     try {
@@ -225,10 +242,12 @@ export default function KasirScreen() {
     if (!code) return;
     const match = products.find((p) => p.barcode === code || p.sku === code);
     if (match) {
+      playScanSuccess();
       addToCart(match);
       setSearch(""); // bersihkan kotak pencarian supaya scan berikutnya siap
       toast.success("Barcode terdeteksi", match.name);
     } else {
+      playScanError();
       setSearch(code);
       toast.info("Barcode belum terdaftar", code);
     }
@@ -283,9 +302,9 @@ export default function KasirScreen() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       {/* Scanner USB global — menangkap input dari barcode scanner USB
           tanpa user perlu memberi fokus ke kolom pencarian. Aktif selama
-          tidak ada modal yang terbuka. */}
+          tidak ada modal yang terbuka DAN toggle on. */}
       <UsbScannerListener
-        active={!scanner && !checkout && !parkPromptOpen && !cancelConfirmOpen && !unitPicker}
+        active={scannerEnabled && !scanner && !checkout && !parkPromptOpen && !cancelConfirmOpen && !unitPicker}
         onScan={onBarcode}
       />
       <ScrollView
@@ -299,6 +318,21 @@ export default function KasirScreen() {
           subtitle={report ? `${report.transaction_count} transaksi · Saldo kas ${formatRupiah(report.cash_balance)}` : "Memuat data…"}
           right={
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Pressable
+                testID="usb-scanner-toggle"
+                onPress={toggleScanner}
+                style={[styles.iconButton, { marginLeft: 0 }, scannerEnabled && { backgroundColor: colors.brandTertiary }]}
+                hitSlop={6}
+              >
+                <Ionicons
+                  name={scannerEnabled ? "barcode-outline" : "barcode"}
+                  size={20}
+                  color={scannerEnabled ? colors.brandPrimary : colors.muted}
+                />
+                {!scannerEnabled ? (
+                  <View style={{ position: "absolute", top: 10, left: 10, right: 10, height: 2, backgroundColor: colors.error, transform: [{ rotate: "-15deg" }], borderRadius: 1 }} />
+                ) : null}
+              </Pressable>
               <Pressable testID="parked-queue-button" onPress={() => router.push("/parked")} style={[styles.iconButton, { marginLeft: 0 }]}>
                 <Ionicons name="layers-outline" size={20} color={colors.brandPrimary} />
                 {parkedCount > 0 ? <View style={{ position: "absolute", top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: colors.error, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 }}><Text style={{ color: colors.onError, fontSize: 10, fontWeight: "800" }}>{parkedCount}</Text></View> : null}
