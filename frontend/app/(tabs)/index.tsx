@@ -928,7 +928,14 @@ function CheckoutSheet({
                         created_by_name: "",
                         status: "active" as const,
                       };
-                      await printReceipt(fakeTx, settings, { openCashDrawer: settings.cashdrawer_enabled, preview: true });
+                      await printReceipt(fakeTx, settings, {
+                        openCashDrawer: settings.cashdrawer_enabled,
+                        preview: true,
+                        // Saat preview + print dapur barengan → sembunyikan logo
+                        // di struk preview supaya tidak dicetak ganda (dapur
+                        // sudah pakai header kecil, preview hanya butuh teks).
+                        omitLogo: settings.kitchen_print_timing === "with_preview",
+                      });
                       toast.success("Struk tercetak", `${paired.name} · ${settings.receipt_width}`);
                       // Jika pengaturan: cetak dapur BERSAMA preview → cetak sekarang juga.
                       if (settings.kitchen_print_timing === "with_preview") {

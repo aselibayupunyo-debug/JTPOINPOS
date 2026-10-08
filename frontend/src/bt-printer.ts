@@ -351,7 +351,7 @@ function padLine(left: string, right: string, cols: number): string {
 export async function printReceipt(
   tx: TransactionDoc,
   settings: BusinessSettings,
-  options: { openCashDrawer?: boolean; copies?: number; preview?: boolean } = {},
+  options: { openCashDrawer?: boolean; copies?: number; preview?: boolean; omitLogo?: boolean } = {},
 ): Promise<void> {
   const widthMm: 58 | 80 = settings.receipt_width === "80mm" ? 80 : 58;
   const paperWidth: "58mm" | "80mm" = widthMm === 80 ? "80mm" : "58mm";
@@ -362,7 +362,9 @@ export async function printReceipt(
   if (options.openCashDrawer || settings.cashdrawer_enabled) b.cashDrawer();
 
   // --- Logo (ESC/POS raster, cached) ---
-  if (settings.logo_base64) {
+  // Lewati logo jika caller eksplisit meminta (misal preview yang berbarengan
+  // dengan print dapur → cukup logo kecil, hemat kertas & pita printer).
+  if (settings.logo_base64 && !options.omitLogo) {
     try {
       const logoBytes = await fetchLogoBytes(paperWidth, settings.logo_base64);
       // Pakai pushBytes agar aman untuk array besar (logo bisa > 18KB).

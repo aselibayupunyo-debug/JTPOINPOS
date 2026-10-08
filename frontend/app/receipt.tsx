@@ -3,7 +3,7 @@ import * as Linking from "expo-linking";
 import * as Sharing from "expo-sharing";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Platform, Pressable, ScrollView, Share, Text, View } from "react-native";import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, Share, Text, View } from "react-native";import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ViewShot, { captureRef } from "react-native-view-shot";
 
 import { apiRequest, BusinessSettings, formatRupiah, PAYMENT_LABELS, TransactionDoc } from "@/src/api";
@@ -100,6 +100,36 @@ export default function ReceiptScreen() {
     }
   };
 
+  const removeLogo = () => {
+    if (!settings?.logo_base64) return;
+    Alert.alert(
+      "Hapus logo?",
+      "Logo akan dihapus dari semua struk. Lanjutkan?",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const header_lines = (settings.header_lines ?? []).map((l) => (l ?? "").trim()).filter(Boolean).slice(0, 4);
+              const footer_lines = (settings.footer_lines ?? []).map((l) => (l ?? "").trim()).filter(Boolean).slice(0, 4);
+              const next = await apiRequest<BusinessSettings>("/settings", {
+                method: "PUT",
+                body: JSON.stringify({ ...settings, logo_base64: null, header_lines, footer_lines }),
+              });
+              setSettings(next);
+              try { const { invalidateLogoCache } = await import("@/src/bt-printer"); await invalidateLogoCache(); } catch { /* ignore */ }
+              toast.success("Logo dihapus");
+            } catch (e) {
+              toast.error("Gagal menghapus logo", e instanceof Error ? e.message : undefined);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -175,6 +205,18 @@ export default function ReceiptScreen() {
           </View>
         </ViewShot>
         <View style={{ gap: 10 }}>
+          {settings.logo_base64 ? (
+            <Pressable
+              testID="receipt-remove-logo"
+              onPress={removeLogo}
+              style={[styles.outlineButton, { borderColor: colors.error }]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Ionicons name="trash-outline" size={16} color={colors.error} />
+                <Text style={[styles.outlineText, { color: colors.error }]}>Hapus logo dari struk</Text>
+              </View>
+            </Pressable>
+          ) : null}
           <Pressable testID="share-whatsapp" onPress={shareWhatsApp} style={styles.primaryButton}>
             <Text style={styles.primaryButtonText}>Kirim via WhatsApp</Text>
           </Pressable>

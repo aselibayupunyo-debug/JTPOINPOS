@@ -121,3 +121,9 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 
 **TODO (sesi berikutnya)**:
 - **Full offline migration**: Rewrite auth + semua endpoint API ke SQLite murni (butuh dedicated session besar).
+
+
+## Session 2026-10 (Iter 15) — Hapus Logo + Omit Logo pada Preview Berbarengan Dapur
+49. **Tombol Hapus Logo di Pengaturan Toko**: `app/settings.tsx` dapat menghapus logo via tombol merah (`testID="remove-logo"`) di card "Identitas toko" dengan konfirmasi `Alert.alert`. Setelah konfirm → `logo_base64` di state di-set `null`; user tekan "Simpan pengaturan" seperti biasa untuk persist. Cache logo printer di-invalidate otomatis saat save.
+50. **Tombol Hapus Logo di Preview Struk**: `app/receipt.tsx` menampilkan tombol "Hapus logo dari struk" (`testID="receipt-remove-logo"`, hanya muncul kalau logo ada) di bawah ViewShot. Konfirmasi `Alert.alert` → PUT `/settings` dengan `logo_base64: null` → invalidate logo cache → toast sukses. Tombol di luar ViewShot agar tidak ikut tercapture saat kirim JPEG.
+51. **Omit Logo di Preview Berbarengan Dapur**: `printReceipt(tx, settings, opts)` menambahkan opsi `omitLogo?: boolean`. Di `app/(tabs)/index.tsx` tombol "Preview / Cetak Struk" pada checkout mengirim `omitLogo: settings.kitchen_print_timing === "with_preview"` → saat user memilih "cetak dapur berbarengan preview", logo besar tidak ikut tercetak di struk preview (hemat kertas; dapur sudah pakai header kecil terpisah). Mode normal (print setelah transaksi) tetap mencetak logo.

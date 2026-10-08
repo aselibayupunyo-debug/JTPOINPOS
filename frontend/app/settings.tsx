@@ -2,7 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest, BusinessSettings } from "@/src/api";
@@ -26,6 +26,21 @@ export default function SettingsScreen() {
     if (!perm.granted) return toast.error("Izin galeri ditolak");
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.6, base64: true, aspect: [1, 1] });
     if (!result.canceled) setSettings((s) => s ? { ...s, logo_base64: result.assets[0].base64 ?? null } : s);
+  };
+
+  const removeLogo = () => {
+    Alert.alert(
+      "Hapus logo?",
+      "Logo pada struk akan dihapus. Lanjutkan?",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: () => setSettings((s) => s ? { ...s, logo_base64: null } : s),
+        },
+      ],
+    );
   };
 
   const save = async () => {
@@ -70,14 +85,31 @@ export default function SettingsScreen() {
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Identitas toko</Text>
-          <Pressable testID="logo-picker" onPress={pickLogo} style={{ height: 110, width: 110, borderRadius: 20, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden", marginVertical: 14 }}>
-            {settings.logo_base64 ? <Image source={{ uri: `data:image/jpeg;base64,${settings.logo_base64}` }} style={{ width: "100%", height: "100%" }} /> : (
-              <>
-                <Ionicons name="image-outline" size={28} color={colors.brandPrimary} />
-                <Text style={[styles.muted, { marginTop: 4 }]}>Logo</Text>
-              </>
-            )}
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 14 }}>
+            <Pressable testID="logo-picker" onPress={pickLogo} style={{ height: 110, width: 110, borderRadius: 20, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+              {settings.logo_base64 ? <Image source={{ uri: `data:image/jpeg;base64,${settings.logo_base64}` }} style={{ width: "100%", height: "100%" }} /> : (
+                <>
+                  <Ionicons name="image-outline" size={28} color={colors.brandPrimary} />
+                  <Text style={[styles.muted, { marginTop: 4 }]}>Logo</Text>
+                </>
+              )}
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.muted}>Rekomendasi: PNG background putih, format persegi (3×3cm) atau persegi panjang (max 4cm sisi terpanjang).</Text>
+              {settings.logo_base64 ? (
+                <Pressable
+                  testID="remove-logo"
+                  onPress={removeLogo}
+                  style={[styles.outlineButton, { marginTop: 8, paddingVertical: 8, borderColor: colors.error }]}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="trash-outline" size={16} color={colors.error} />
+                    <Text style={[styles.outlineText, { color: colors.error }]}>Hapus logo</Text>
+                  </View>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
           <Text style={styles.inputLabel}>Nama bisnis</Text>
           <TextInput testID="set-business-name" value={settings.business_name} onChangeText={(t) => setSettings((s) => s ? { ...s, business_name: t } : s)} style={styles.input} placeholderTextColor={colors.muted} />
           <Text style={styles.inputLabel}>Alamat</Text>
