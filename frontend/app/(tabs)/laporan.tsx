@@ -16,7 +16,7 @@ import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
 type Period = "daily" | "monthly" | "yearly" | "custom";
-type Tab = "ringkasan" | "produk" | "pelanggan" | "operator" | "barang" | "transaksi";
+type Tab = "ringkasan" | "produk" | "pelanggan" | "operator" | "barang" | "transaksi" | "metode";
 
 function todayYmd(): string {
   const d = new Date();
@@ -203,6 +203,32 @@ export default function LaporanScreen() {
     { key: "payable", label: "Hutang", value: formatRupiah(report.payable), icon: "alert-circle-outline" as const, color: colors.error },
   ] : [];
 
+  // Rekap per metode pembayaran dari daftar transaksi yang sudah di-filter periode.
+  // Mengelompokkan berdasarkan `payment_method` (ID) dan menampilkan label
+  // yang diset saat transaksi. Dukung banyak metode pembayaran kustom.
+  const paymentBreakdown = (() => {
+    const map = new Map<string, { label: string; count: number; total: number; cash: number; credit: number }>();
+    for (const t of transactions) {
+      if (!t || t.status === "cancelled") continue;
+      const key = String(t.payment_method || "unknown");
+      const label = t.payment_method_label || PAYMENT_LABELS[key] || key;
+      const bucket = map.get(key) ?? { label, count: 0, total: 0, cash: 0, credit: 0 };
+      bucket.count += 1;
+      bucket.total += Number(t.total || 0);
+      // Terpisahkan antara pembayaran langsung vs tersisa (piutang)
+      const paid = Number((t as any).paid ?? t.total ?? 0);
+      bucket.cash += Math.min(paid, Number(t.total || 0));
+      bucket.credit += Math.max(0, Number(t.total || 0) - paid);
+      map.set(key, bucket);
+    }
+    const rows = Array.from(map.values()).sort((a, b) => b.total - a.total);
+    const grandCount = rows.reduce((s, r) => s + r.count, 0);
+    const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+    const grandCash = rows.reduce((s, r) => s + r.cash, 0);
+    const grandCredit = rows.reduce((s, r) => s + r.credit, 0);
+    return { rows, grandCount, grandTotal, grandCash, grandCredit };
+  })();
+
   const sendPdf = async () => {
     const biz = user?.business_name ?? "JTPOIN POS";
     if (!report) return;
@@ -270,6 +296,25 @@ export default function LaporanScreen() {
             { label: "Total omzet", value: formatRupiah(transactions.reduce((s, t) => s + t.total, 0)) },
           ],
         }, biz);
+      } else if (tab === "metode") {
+        await shareReportPdf({
+          title: `Rekap Metode Pembayaran · ${periodLabel}`, subtitle: biz,
+          headers: ["Metode", "Transaksi", "Total", "Dibayar", "Piutang", "% Omzet"],
+          rows: paymentBreakdown.rows.map((r) => [
+            r.label,
+            String(r.count),
+            formatRupiah(r.total),
+            formatRupiah(r.cash),
+            formatRupiah(r.credit),
+            paymentBreakdown.grandTotal > 0 ? `${Math.round((r.total / paymentBreakdown.grandTotal) * 100)}%` : "0%",
+          ]),
+          summary: [
+            { label: "Total transaksi", value: String(paymentBreakdown.grandCount) },
+            { label: "Total omzet", value: formatRupiah(paymentBreakdown.grandTotal) },
+            { label: "Total dibayar", value: formatRupiah(paymentBreakdown.grandCash) },
+            { label: "Total piutang", value: formatRupiah(paymentBreakdown.grandCredit) },
+          ],
+        }, biz);
       }
     } catch (e) { toast.error("Gagal membuat PDF", e instanceof Error ? e.message : undefined); }
   };
@@ -323,6 +368,7 @@ export default function LaporanScreen() {
             { key: "operator", label: "Per Operator" },
             { key: "barang", label: "Detail Barang" },
             { key: "transaksi", label: "Detail Transaksi" },
+            { key: "metode", label: "Metode Bayar" },
           ] as { key: Tab; label: string }[]).map((item) => (
             <Pressable key={item.key} testID={`report-tab-${item.key}`} onPress={() => setTab(item.key)} style={[styles.chip, tab === item.key && styles.chipActive]}>
               <Text style={[styles.chipText, tab === item.key && styles.chipTextActive]}>{item.label}</Text>
@@ -489,6 +535,51 @@ export default function LaporanScreen() {
                 </View>
               </View>
             );})}
+          </View>
+        ) : null}
+
+        {tab === "metode" ? (
+          <View style={styles.card} testID="report-metode-list">
+            <Text style={styles.cardTitle}>Rekap per Metode Pembayaran · {periodLabel}</Text>
+            <Text style={[styles.muted, { marginTop: 4, marginBottom: 10 }]}>
+              {paymentBreakdown.grandCount} transaksi · total omzet {formatRupiah(paymentBreakdown.grandTotal)}
+            </Text>
+            {paymentBreakdown.rows.length === 0 ? (
+              <Text style={styles.muted}>Belum ada transaksi di periode ini.</Text>
+            ) : (
+              <>
+                {paymentBreakdown.rows.map((r, idx) => {
+                  const pct = paymentBreakdown.grandTotal > 0 ? Math.round((r.total / paymentBreakdown.grandTotal) * 100) : 0;
+                  return (
+                    <View key={`${r.label}-${idx}`} style={styles.listRow}>
+                      <View style={[styles.settingIcon, { backgroundColor: idx === 0 ? colors.brandPrimary : colors.brandTertiary }]}>
+                        <Ionicons name="card-outline" size={18} color={idx === 0 ? colors.onBrandPrimary : colors.brandPrimary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.productName}>{r.label}</Text>
+                        <Text style={styles.muted}>{r.count} transaksi · {pct}% dari total</Text>
+                        {r.credit > 0 ? (
+                          <Text style={{ color: colors.warning, fontSize: 12, marginTop: 3, fontWeight: "700" }}>
+                            Piutang {formatRupiah(r.credit)}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Text style={[styles.productName, { color: colors.brandPrimary }]}>{formatRupiah(r.total)}</Text>
+                    </View>
+                  );
+                })}
+                <View style={[styles.listRow, { marginTop: 8, borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 12 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.productName}>Total keseluruhan</Text>
+                    <Text style={styles.muted}>
+                      Dibayar {formatRupiah(paymentBreakdown.grandCash)}
+                      {paymentBreakdown.grandCredit > 0 ? ` · Piutang ${formatRupiah(paymentBreakdown.grandCredit)}` : ""}
+                    </Text>
+                  </View>
+                  <Text style={[styles.productName, { color: colors.success }]}>{formatRupiah(paymentBreakdown.grandTotal)}</Text>
+                </View>
+              </>
+            )}
           </View>
         ) : null}
 
