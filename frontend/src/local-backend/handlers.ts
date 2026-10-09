@@ -741,7 +741,24 @@ export async function createTransaction(ctx: Ctx): Promise<any> {
   const taxAmt = Math.round(afterDisc * taxPct / 100);
   const total = afterDisc + taxAmt + shipping;
   const paid = Number(body.paid_amount || 0);
-  const outstanding = Math.max(0, total - paid);
+  // Resolve payment method kind — hanya "credit" yang boleh membuat
+  // piutang/hutang. Metode lain (cash/qris/transfer) tidak menambah
+  // outstanding meskipun paid < total (short-pay di-anggap selesai).
+  const paymentMethodId = String(body.payment_method || "pm_cash");
+  const pmRow = await db.getFirstAsync<{ json: string }>(
+    "SELECT json FROM payment_methods WHERE id = ? AND business_id = ?",
+    [paymentMethodId, u.business_id],
+  );
+  let paymentKind = "cash";
+  if (pmRow) {
+    try { paymentKind = JSON.parse(pmRow.json).kind || "cash"; } catch { /* ignore */ }
+  } else if (paymentMethodId === "pm_credit" || paymentMethodId === "credit") {
+    paymentKind = "credit";
+  } else if (paymentMethodId === "pm_qris" || paymentMethodId === "qris_static") {
+    paymentKind = "qris_static";
+  }
+  // Outstanding dihitung berdasarkan kind. Non-credit → selalu 0 (dianggap lunas).
+  const outstanding = paymentKind === "credit" ? Math.max(0, total - paid) : 0;
 
   const now = nowIso();
   const invSerial = await nextCounter(u.business_id, `inv_${type}`);
@@ -755,6 +772,7 @@ export async function createTransaction(ctx: Ctx): Promise<any> {
     transaction_type: type,
     payment_method: body.payment_method || "cash",
     payment_method_label: body.payment_method_label || "Tunai",
+    payment_method_kind: paymentKind,
     items,
     subtotal,
     global_discount: discAmt + Math.round(subtotal * discPct / 100),
@@ -802,8 +820,9 @@ export async function createTransaction(ctx: Ctx): Promise<any> {
       await db.runAsync("UPDATE transactions_t SET json = ? WHERE id = ?", [JSON.stringify(origDoc), body.original_transaction_id]);
     }
   }
-  // Record debt entry if outstanding > 0 for sale
-  if (type === "sale" && outstanding > 0 && body.customer_id) {
+  // Record debt entry if credit sale → outstanding > 0.
+  // Metode non-credit tidak boleh menghasilkan piutang (user requirement).
+  if (type === "sale" && paymentKind === "credit" && outstanding > 0 && body.customer_id) {
     const debtDoc = {
       id: uuid(), business_id: u.business_id,
       customer_id: body.customer_id, customer_name: doc.customer_name,
@@ -881,13 +900,29 @@ export async function listDebts(ctx: Ctx): Promise<any> {
   const kind = ctx.query.kind || "receivable";
   const db = await getDb();
   // Return TransactionDoc[] with outstanding > 0 — matches UI expectation.
+  // Only credit payment transactions count as debt (per user requirement).
   const txType = kind === "payable" ? "purchase" : "sale";
   const rows = await db.getAllAsync<{ json: string }>(
     "SELECT json FROM transactions_t WHERE business_id = ? AND transaction_type = ? ORDER BY created_at DESC",
     [u.business_id, txType],
   );
+  // Build cache metode utk resolve kind pada data lama tanpa payment_method_kind
+  const pms = await fetchListJSON<any>("payment_methods", u.business_id);
+  const kindById = new Map<string, string>(pms.map((p: any) => [p.id, p.kind || "cash"]));
+  const resolveKind = (t: any): string => {
+    if (t.payment_method_kind) return t.payment_method_kind;
+    const id = String(t.payment_method || "");
+    if (kindById.has(id)) return kindById.get(id)!;
+    if (id === "pm_credit" || id === "credit") return "credit";
+    return "cash";
+  };
   const items = rows.map((r) => JSON.parse(r.json))
-    .filter((t) => t.status !== "cancelled" && !t.returned && Number(t.outstanding || 0) > 0);
+    .filter((t) =>
+      t.status !== "cancelled" &&
+      !t.returned &&
+      Number(t.outstanding || 0) > 0 &&
+      resolveKind(t) === "credit",
+    );
   const total = items.reduce((s, t) => s + Number(t.outstanding || 0), 0);
   return { total, items };
 }
@@ -1067,6 +1102,7 @@ async function txInRange(businessId: string, start: number, end: number): Promis
 
 export async function reportSummary(ctx: Ctx): Promise<any> {
   const u = requireUser(ctx);
+  const db = await getDb();
   const [start, end] = periodRange(ctx.query);
   const period = (ctx.query.period as any) || "daily";
   const txs = await txInRange(u.business_id, start, end);
@@ -1085,9 +1121,34 @@ export async function reportSummary(ctx: Ctx): Promise<any> {
     + cashEntries.filter((c) => c.entry_type === "income").reduce((s, c) => s + (c.amount || 0), 0);
   const cash_out = purchases.filter((t) => t.payment_method === "cash" || t.payment_method === "pm_cash").reduce((s, t) => s + (t.total || 0), 0)
     + cashEntries.filter((c) => c.entry_type === "expense").reduce((s, c) => s + (c.amount || 0), 0);
-  const debts = await fetchListJSON<any>("debts", u.business_id);
-  const receivable = debts.filter((d) => (d.kind || "receivable") === "receivable").reduce((s, d) => s + (d.remaining || 0), 0);
-  const payable = debts.filter((d) => d.kind === "payable").reduce((s, d) => s + (d.remaining || 0), 0);
+  // Receivable / payable dihitung dari transaksi aktif (outstanding > 0) dengan
+  // payment_method_kind === "credit", agar konsisten dgn layar Piutang/Hutang.
+  // Sebelumnya pakai tabel `debts` yang menjadi stale saat transaksi di-pay off.
+  const pms = await fetchListJSON<any>("payment_methods", u.business_id);
+  const kindById = new Map<string, string>(pms.map((p: any) => [p.id, p.kind || "cash"]));
+  const resolveKind = (t: any): string => {
+    if (t.payment_method_kind) return t.payment_method_kind;
+    const id = String(t.payment_method || "");
+    if (kindById.has(id)) return kindById.get(id)!;
+    if (id === "pm_credit" || id === "credit") return "credit";
+    return "cash";
+  };
+  const allSales = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM transactions_t WHERE business_id = ? AND transaction_type = 'sale'",
+    [u.business_id],
+  );
+  const allPurchases = await db.getAllAsync<{ json: string }>(
+    "SELECT json FROM transactions_t WHERE business_id = ? AND transaction_type = 'purchase'",
+    [u.business_id],
+  );
+  const receivable = allSales
+    .map((r) => JSON.parse(r.json))
+    .filter((t) => t.status !== "cancelled" && !t.returned && Number(t.outstanding || 0) > 0 && resolveKind(t) === "credit")
+    .reduce((s, t) => s + Number(t.outstanding || 0), 0);
+  const payable = allPurchases
+    .map((r) => JSON.parse(r.json))
+    .filter((t) => t.status !== "cancelled" && !t.returned && Number(t.outstanding || 0) > 0 && resolveKind(t) === "credit")
+    .reduce((s, t) => s + Number(t.outstanding || 0), 0);
   const products = await fetchListJSON<any>("products", u.business_id);
   const low_stock = products.filter((p) => p.product_type !== "service" && Number(p.stock || 0) <= Number(p.min_stock || 0)).length;
   return {
