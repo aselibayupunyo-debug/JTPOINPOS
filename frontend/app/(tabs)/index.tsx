@@ -362,20 +362,27 @@ export default function KasirScreen() {
             autoCorrect={false}
             autoCapitalize="none"
             spellCheck={false}
-            onSubmitEditing={() => {
-              // Scanner USB biasanya mengirim Enter di akhir barcode.
-              // Setiap submit → treat sebagai percobaan scan. Match → masuk
-              // keranjang + kolom pencarian bersih. Tidak match → beri feedback
-              // error + biarkan teks utk pencarian manual.
-              const code = search.trim();
-              if (!code) return;
+            selectTextOnFocus
+            clearButtonMode="while-editing"
+            onSubmitEditing={(e) => {
+              // CRITICAL: Scanner USB mengetik lebih cepat dari update state.
+              // Pakai `e.nativeEvent.text` yang selalu berisi value asli
+              // di native TextInput saat Enter ditekan — bukan state `search`
+              // yang mungkin belum ter-update penuh (race condition React).
+              const rawText = String(e?.nativeEvent?.text ?? search ?? "").trim();
+              if (!rawText) return;
+              const code = rawText;
+
+              // Clear kotak pencarian lebih dulu agar scan berikutnya
+              // tidak di-append ke teks lama. Toast tetap tampilkan isi code.
+              setSearch("");
+              try { searchRef.current?.clear(); } catch { /* ignore */ }
 
               // 1) Match pada barcode/SKU produk utama
               const mainMatch = products.find((p) => p.barcode === code || p.sku === code);
               if (mainMatch) {
                 playScanSuccess();
                 addToCart(mainMatch);
-                setSearch("");
                 toast.success("Barcode terdeteksi", mainMatch.name);
                 setTimeout(() => searchRef.current?.focus(), 30);
                 return;
@@ -388,21 +395,21 @@ export default function KasirScreen() {
                   if (p.product_type !== "service" && p.stock <= 0) {
                     playScanError();
                     toast.error("Stok habis", p.name);
-                    setSearch("");
                     setTimeout(() => searchRef.current?.focus(), 30);
                     return;
                   }
                   const unitPrice = u.price || priceOf(p) * u.factor;
                   addLineToCart(p, u.name, u.factor, unitPrice);
                   playScanSuccess();
-                  setSearch("");
                   toast.success("Barcode terdeteksi", `${p.name} · ${u.name}`);
                   setTimeout(() => searchRef.current?.focus(), 30);
                   return;
                 }
               }
 
-              // 3) Tidak ditemukan — feedback error, biarkan teks utk pencarian manual
+              // 3) Tidak ditemukan — beep error, toast tampilkan code yg di-scan.
+              // Kotak pencarian tetap bersih supaya scan berikutnya langsung
+              // bisa diproses (tidak appended ke sisa teks sebelumnya).
               playScanError();
               toast.info("Barcode tidak ditemukan", code);
               setTimeout(() => searchRef.current?.focus(), 30);
