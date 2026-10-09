@@ -160,3 +160,29 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 68. **Integrasi feedback**: `onBarcode()` panggil `playScanSuccess()` saat match ditemukan & `playScanError()` saat barcode tak terdaftar. Toggle on/off juga memainkan beep konfirmasi & toast info.
 69. **UsbScannerListener dependency**: prop `active` sekarang digabung `scannerEnabled && !modal-apapun`. Kalau toggle off, hidden TextInput unmount → user bisa tap kolom pencarian & muncul soft keyboard untuk ketik manual tanpa gangguan scanner.
 
+
+## Session 2026-10 (Iter 19) — USB Scanner Fix: Direct-to-Cart
+70. **Masalah lama**: UsbScannerListener hidden TextInput tidak reliabel karena search field "merebut" fokus — scanner input menumpuk di kolom pencarian tanpa auto-submit ke keranjang. User harus hapus manual tiap scan.
+71. **Pendekatan baru**: Jadikan kolom pencarian itu sendiri target scanner. Hidden listener dihapus; `(tabs)/index.tsx` sekarang punya `searchRef` dengan:
+    - `autoFocus={scannerEnabled}` — langsung siap scan saat screen dibuka
+    - `blurOnSubmit={false}` — Enter dari scanner tidak melepas fokus
+    - `onSubmitEditing` → cari match → add ke keranjang → `setSearch("")` → refocus (30ms setelah event)
+    - `onBlur` → refocus kalau tidak ada TextInput lain aktif (via `TextInput.State.currentlyFocusedInput`)
+72. **Enhanced barcode lookup**: match 3-level:
+    1. `products[].barcode` / `products[].sku` → `addToCart(product)` (buka unit picker kalau multi-unit)
+    2. `products[].units[].barcode` → **direct `addLineToCart`** dengan unit & harga spesifik, skip picker
+    3. Tidak match → `playScanError()`, teks tetap di search utk filter manual
+73. **Multi-scan accumulation**: 1 scan = +1 qty. `addLineToCart` sudah inkremen qty untuk line_id yang sudah ada → scan barcode sama berkali-kali otomatis naik qty.
+74. **Toggle refocus**: Ketika scanner di-enable, `searchRef.focus()` dipanggil langsung; di-disable, `searchRef.blur()` agar user bisa interaksi normal.
+75. **UsbScannerListener dropped**: komponen hidden `src/hooks/use-usb-scanner.tsx` tidak di-import lagi di cashier (masih ada di repo kalau dibutuhkan nanti).
+
+
+## Session 2026-10 (Iter 20) — Fix CLEARTEXT HTTP Android (LAN Sync)
+76. **Error nyata di device**: `java.net.UnknownServiceException: CLEARTEXT communication to 10.150.43.172 not permitted by network security policy`. Android 9+ (API 28+) memblokir koneksi HTTP non-TLS secara default.
+77. **Root cause**: Field `expo.android.usesCleartextTraffic: true` di app.json **tidak diterapkan** oleh Expo prebuild di SDK modern — hanya field di dalam `expo-build-properties` plugin yang di-tulis ke `AndroidManifest.xml` saat generate build native.
+78. **Fix**: Install `expo-build-properties` + konfigurasi di `plugins` dalam bentuk array `["expo-build-properties", { "android": { "usesCleartextTraffic": true } }]`. Ini meng-set `android:usesCleartextTraffic="true"` pada tag `<application>` di manifest build Android baru.
+79. **Install `buffer` package**: `src/lan-sync/http-server.ts` pakai `import { Buffer } from "buffer"` untuk parse HTTP request/response. Yarn Expo install menambahkan `buffer@6.0.3` ke dependencies agar bundling eksplisit (sebelumnya mengandalkan RN polyfill implisit).
+80. **Dampak**: APK berikutnya yang di-generate dari Publish akan dapat berkomunikasi HTTP ke IP LAN (`192.168.x.x`) & IP Tailscale (`100.x.x.x`). HTTPS tetap preferred utk production, tapi utk LAN internal + Tailscale (yang sudah encrypted end-to-end di layer VPN) cleartext aman.
+
+**Catatan**: Fix ini butuh **generate build APK baru** — tidak cukup redeploy. Prebuild Expo akan menulis ulang AndroidManifest.xml dengan flag cleartext.
+

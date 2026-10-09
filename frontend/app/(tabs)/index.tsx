@@ -11,7 +11,6 @@ import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { SyncBanner } from "@/src/components/sync-banner";
-import { UsbScannerListener } from "@/src/hooks/use-usb-scanner";
 import { getScannerEnabled, playScanError, playScanSuccess, setScannerEnabled } from "@/src/scanner-feedback";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -50,6 +49,7 @@ export default function KasirScreen() {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [scannerEnabled, setScannerEnabledState] = useState(true);
   const [permission, requestPermission] = useCameraPermissions();
+  const searchRef = useRef<TextInput>(null);
 
   useEffect(() => { getScannerEnabled().then(setScannerEnabledState); }, []);
   const toggleScanner = useCallback(() => {
@@ -59,8 +59,10 @@ export default function KasirScreen() {
       if (next) {
         playScanSuccess();
         toast.success("Scanner USB aktif", "Scan barang akan langsung masuk keranjang");
+        setTimeout(() => searchRef.current?.focus(), 30);
       } else {
         toast.info("Scanner USB dimatikan", "Ketik manual di kolom pencarian");
+        try { searchRef.current?.blur(); } catch { /* ignore */ }
       }
       return next;
     });
@@ -300,13 +302,6 @@ export default function KasirScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      {/* Scanner USB global — menangkap input dari barcode scanner USB
-          tanpa user perlu memberi fokus ke kolom pencarian. Aktif selama
-          tidak ada modal yang terbuka DAN toggle on. */}
-      <UsbScannerListener
-        active={scannerEnabled && !scanner && !checkout && !parkPromptOpen && !cancelConfirmOpen && !unitPicker}
-        onScan={onBarcode}
-      />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
@@ -356,7 +351,77 @@ export default function KasirScreen() {
           </View>
         ) : null}
         <View style={styles.row}>
-          <TextInput testID="search-input" value={search} onChangeText={setSearch} placeholder="Cari nama / barcode / SKU" placeholderTextColor={colors.muted} style={styles.search} />
+          <TextInput
+            ref={searchRef}
+            testID="search-input"
+            value={search}
+            onChangeText={setSearch}
+            autoFocus={scannerEnabled}
+            blurOnSubmit={false}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+            spellCheck={false}
+            onSubmitEditing={() => {
+              // Scanner USB biasanya mengirim Enter di akhir barcode.
+              // Setiap submit → treat sebagai percobaan scan. Match → masuk
+              // keranjang + kolom pencarian bersih. Tidak match → beri feedback
+              // error + biarkan teks utk pencarian manual.
+              const code = search.trim();
+              if (!code) return;
+
+              // 1) Match pada barcode/SKU produk utama
+              const mainMatch = products.find((p) => p.barcode === code || p.sku === code);
+              if (mainMatch) {
+                playScanSuccess();
+                addToCart(mainMatch);
+                setSearch("");
+                toast.success("Barcode terdeteksi", mainMatch.name);
+                setTimeout(() => searchRef.current?.focus(), 30);
+                return;
+              }
+
+              // 2) Match pada barcode satuan (unit-level) — langsung add tanpa unit picker
+              for (const p of products) {
+                const u = (p.units || []).find((x) => x.barcode === code);
+                if (u) {
+                  if (p.product_type !== "service" && p.stock <= 0) {
+                    playScanError();
+                    toast.error("Stok habis", p.name);
+                    setSearch("");
+                    setTimeout(() => searchRef.current?.focus(), 30);
+                    return;
+                  }
+                  const unitPrice = u.price || priceOf(p) * u.factor;
+                  addLineToCart(p, u.name, u.factor, unitPrice);
+                  playScanSuccess();
+                  setSearch("");
+                  toast.success("Barcode terdeteksi", `${p.name} · ${u.name}`);
+                  setTimeout(() => searchRef.current?.focus(), 30);
+                  return;
+                }
+              }
+
+              // 3) Tidak ditemukan — feedback error, biarkan teks utk pencarian manual
+              playScanError();
+              toast.info("Barcode tidak ditemukan", code);
+              setTimeout(() => searchRef.current?.focus(), 30);
+            }}
+            onBlur={() => {
+              // Kalau scanner enabled, re-focus kecuali ada TextInput lain yang aktif
+              if (!scannerEnabled) return;
+              setTimeout(() => {
+                try {
+                  const current = (TextInput as any).State?.currentlyFocusedInput?.();
+                  if (current && current !== searchRef.current) return; // input lain aktif
+                  searchRef.current?.focus();
+                } catch { /* ignore */ }
+              }, 300);
+            }}
+            placeholder="Scan / cari nama / barcode / SKU"
+            placeholderTextColor={colors.muted}
+            style={styles.search}
+          />
           <Pressable testID="scan-button" onPress={openScanner} style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.75 }]}>
             <Ionicons name="scan-outline" size={22} color={colors.brandPrimary} />
           </Pressable>
