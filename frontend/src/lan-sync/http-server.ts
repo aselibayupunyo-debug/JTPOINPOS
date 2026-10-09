@@ -33,26 +33,9 @@ type ServerHandle = {
 
 let active: ServerHandle | null = null;
 
-function parseRequestHead(headBuffer: Buffer): { method: string; path: string; headers: Record<string, string> } | null {
-  const text = headBuffer.toString("utf8");
-  const firstLineEnd = text.indexOf("\r\n");
-  if (firstLineEnd < 0) return null;
-  const statusLine = text.slice(0, firstLineEnd);
-  const [method, path] = statusLine.split(" ");
-  if (!method || !path) return null;
-
-  const headers: Record<string, string> = {};
-  const headerText = text.slice(firstLineEnd + 2);
-  for (const line of headerText.split("\r\n")) {
-    if (!line) continue;
-    const idx = line.indexOf(":");
-    if (idx < 0) continue;
-    const k = line.slice(0, idx).trim().toLowerCase();
-    const v = line.slice(idx + 1).trim();
-    headers[k] = v;
-  }
-  return { method: method.toUpperCase(), path, headers };
-}
+// Parser lama berbasis Buffer dibuang; sekarang pakai string parser inline
+// di dalam socket.on('data'), karena chunk react-native-tcp-socket tidak
+// selalu kompatibel dengan Buffer polyfill di Android.
 
 function buildResponse(status: number, body: string, extraHeaders: Record<string, string> = {}): Buffer {
   const bodyBuffer = Buffer.from(body, "utf8");
@@ -132,64 +115,97 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
 
   return new Promise((resolve, reject) => {
     const server = TcpSocket.createServer((socket: any) => {
-      let headBuffer = Buffer.alloc(0);
-      let bodyBuffer = Buffer.alloc(0);
+      // Pakai string buffer alih-alih Buffer karena chunk yang diterima
+      // dari react-native-tcp-socket di Android bisa jadi Uint8Array mentah
+      // yang tidak compatible dengan Buffer.indexOf/Buffer.concat polyfill.
+      // String concat selalu bekerja di platform manapun.
+      let accumulated = "";
       let headParsed = false;
       let contentLength = 0;
       let method = "";
       let path = "";
       let headers: Record<string, string> = {};
 
+      // Normalisasi chunk apapun → string UTF-8.
+      const chunkToString = (chunk: any): string => {
+        if (chunk == null) return "";
+        if (typeof chunk === "string") return chunk;
+        try {
+          if (Buffer.isBuffer(chunk)) return chunk.toString("utf8");
+        } catch { /* fall through */ }
+        try {
+          return Buffer.from(chunk).toString("utf8");
+        } catch { /* fall through */ }
+        try {
+          return String.fromCharCode.apply(null, Array.from(chunk as any));
+        } catch {
+          return String(chunk);
+        }
+      };
+
       const bail = (status: number, msg: string) => {
         try {
-          // Pakai `end(buffer)` agar atomic — tulis + close setelah flush.
           socket.end(buildResponse(status, JSON.stringify({ detail: msg })));
         } catch { /* noop */ }
       };
 
-      // Flag agar response hanya dikirim 1x (hindari race antar chunk).
       let responseSent = false;
-
       const sendResponse = (resp: Buffer) => {
         if (responseSent) return;
         responseSent = true;
         try {
           // CRITICAL: pakai `socket.end(buffer)` BUKAN `write()` + `end()` terpisah.
-          // react-native-tcp-socket write adalah async; kalau end() dipanggil
-          // sebelum data ter-flush, Android akan dapat "unexpected end of stream".
           socket.end(resp);
         } catch { /* noop */ }
       };
 
-      socket.on("data", async (chunk: Buffer) => {
+      socket.on("data", async (chunk: any) => {
         try {
           if (responseSent) return;
-          if (!headParsed) {
-            headBuffer = Buffer.concat([headBuffer, chunk]);
-            if (headBuffer.length > 64 * 1024) {
-              bail(413, "Header terlalu besar");
-              return;
-            }
-            const sep = headBuffer.indexOf("\r\n\r\n");
-            if (sep < 0) return; // tunggu chunk berikutnya
-            const headPart = headBuffer.subarray(0, sep);
-            const bodyStart = headBuffer.subarray(sep + 4);
-            const parsed = parseRequestHead(headPart);
-            if (!parsed) { bail(400, "Request malformed"); return; }
-            method = parsed.method;
-            path = parsed.path;
-            headers = parsed.headers;
-            headParsed = true;
-            contentLength = Number(headers["content-length"] || "0");
-            if (contentLength > BODY_LIMIT_BYTES) { bail(413, "Body terlalu besar"); return; }
-            bodyBuffer = bodyStart;
-          } else {
-            bodyBuffer = Buffer.concat([bodyBuffer, chunk]);
-            if (bodyBuffer.length > BODY_LIMIT_BYTES) { bail(413, "Body terlalu besar"); return; }
+          accumulated += chunkToString(chunk);
+          if (accumulated.length > 64 * 1024 && !headParsed) {
+            bail(413, "Header terlalu besar");
+            return;
           }
 
-          if (headParsed && bodyBuffer.length >= contentLength) {
-            const bodyStr = contentLength > 0 ? bodyBuffer.subarray(0, contentLength).toString("utf8") : "";
+          if (!headParsed) {
+            const sep = accumulated.indexOf("\r\n\r\n");
+            if (sep < 0) return; // tunggu chunk berikutnya
+            const headText = accumulated.slice(0, sep);
+            const bodyStart = accumulated.slice(sep + 4);
+            // Parse status line
+            const firstLineEnd = headText.indexOf("\r\n");
+            const statusLine = firstLineEnd < 0 ? headText : headText.slice(0, firstLineEnd);
+            const parts = statusLine.split(" ");
+            if (parts.length < 2 || !parts[0] || !parts[1]) {
+              bail(400, "Request malformed (status line)");
+              return;
+            }
+            method = parts[0].toUpperCase();
+            path = parts[1];
+            headers = {};
+            const headerLines = firstLineEnd < 0 ? [] : headText.slice(firstLineEnd + 2).split("\r\n");
+            for (const line of headerLines) {
+              if (!line) continue;
+              const idx = line.indexOf(":");
+              if (idx < 0) continue;
+              headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+            }
+            headParsed = true;
+            contentLength = Number(headers["content-length"] || "0") || 0;
+            if (contentLength > BODY_LIMIT_BYTES) {
+              bail(413, "Body terlalu besar");
+              return;
+            }
+            // Simpan sisa setelah header sebagai mulai body
+            accumulated = bodyStart;
+          }
+
+          // Setelah header di-parse: tunggu sampai body cukup
+          if (Buffer.byteLength(accumulated, "utf8") >= contentLength) {
+            const bodyStr = contentLength > 0
+              ? Buffer.from(accumulated, "utf8").subarray(0, contentLength).toString("utf8")
+              : "";
             const resp = await handleRequest(method, path, headers, bodyStr);
             sendResponse(resp);
           }
