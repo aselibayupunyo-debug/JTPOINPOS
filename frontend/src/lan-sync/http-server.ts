@@ -141,12 +141,29 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
       let headers: Record<string, string> = {};
 
       const bail = (status: number, msg: string) => {
-        try { socket.write(buildResponse(status, JSON.stringify({ detail: msg }))); } catch { /* noop */ }
-        try { socket.end(); } catch { /* noop */ }
+        try {
+          // Pakai `end(buffer)` agar atomic — tulis + close setelah flush.
+          socket.end(buildResponse(status, JSON.stringify({ detail: msg })));
+        } catch { /* noop */ }
+      };
+
+      // Flag agar response hanya dikirim 1x (hindari race antar chunk).
+      let responseSent = false;
+
+      const sendResponse = (resp: Buffer) => {
+        if (responseSent) return;
+        responseSent = true;
+        try {
+          // CRITICAL: pakai `socket.end(buffer)` BUKAN `write()` + `end()` terpisah.
+          // react-native-tcp-socket write adalah async; kalau end() dipanggil
+          // sebelum data ter-flush, Android akan dapat "unexpected end of stream".
+          socket.end(resp);
+        } catch { /* noop */ }
       };
 
       socket.on("data", async (chunk: Buffer) => {
         try {
+          if (responseSent) return;
           if (!headParsed) {
             headBuffer = Buffer.concat([headBuffer, chunk]);
             if (headBuffer.length > 64 * 1024) {
@@ -174,8 +191,7 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
           if (headParsed && bodyBuffer.length >= contentLength) {
             const bodyStr = contentLength > 0 ? bodyBuffer.subarray(0, contentLength).toString("utf8") : "";
             const resp = await handleRequest(method, path, headers, bodyStr);
-            try { socket.write(resp); } catch { /* noop */ }
-            try { socket.end(); } catch { /* noop */ }
+            sendResponse(resp);
           }
         } catch (e) {
           const detail = e instanceof Error ? e.message : "Server error";
