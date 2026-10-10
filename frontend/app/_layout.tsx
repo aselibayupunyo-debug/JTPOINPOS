@@ -1,7 +1,8 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useKeepAwake } from "expo-keep-awake";
+import { activateKeepAwakeAsync, useKeepAwake } from "expo-keep-awake";
 import { Stack } from "expo-router";
-import { LogBox } from "react-native";
+import { useEffect } from "react";
+import { AppState, LogBox } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -13,11 +14,35 @@ import { ToastProvider } from "@/src/toast";
 
 LogBox.ignoreAllLogs(true);
 
+const KEEP_AWAKE_TAG = "JTPOIN_ALWAYS_ON";
+
 export default function RootLayout() {
-  // Jaga layar HP tetap menyala selama aplikasi dibuka. Penting untuk:
-  // - Mode "Server Utama" (HP server tak boleh sleep agar HTTP server tetap jalan)
-  // - Kasir aktif (user tidak perlu bolak-balik unlock HP)
-  useKeepAwake();
+  // Jaga layar HP tetap menyala selama aplikasi dibuka.
+  // Pakai hook SEBAGAI fallback utama.
+  useKeepAwake(KEEP_AWAKE_TAG);
+
+  // Pakai API imperatif juga + listener AppState utk memastikan wake-lock
+  // aktif kembali setiap kali app masuk ke foreground. Ini melindungi
+  // dari kasus-kasus langka di mana hook kehilangan status setelah
+  // navigation/remount atau transisi background→foreground.
+  useEffect(() => {
+    let mounted = true;
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => undefined);
+    const sub = AppState.addEventListener("change", (state) => {
+      if (!mounted) return;
+      if (state === "active") {
+        activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => undefined);
+      }
+    });
+    return () => {
+      mounted = false;
+      sub.remove();
+      // Jangan panggil deactivateKeepAwake di cleanup — biar wake-lock
+      // lepas natural saat aplikasi benar-benar berhenti. Deactivate di
+      // sini bisa salah release saat RootLayout re-render.
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
