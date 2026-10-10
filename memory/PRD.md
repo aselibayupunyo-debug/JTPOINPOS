@@ -195,3 +195,14 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
     - Mode **KASIR TERHUBUNG**: Badge biru info + host:port + dot status (hijau=terhubung, kuning=cek, merah=terputus); ping `/health` tiap 10s via `pingLanSyncServer`
     - Mode **MANDIRI**: Banner disembunyikan agar tampilan tetap bersih (default)
     - Re-poll config saat app jadi aktif (AppState listener) agar user yang ganti mode di settings langsung ter-refleksi.
+
+
+## Session 2026-06 (Iter 22) — Fix Login via LAN Sync (Transfer-Encoding Chunked)
+83. **Bug**: Dari HP mode "Kasir Terhubung", setelah test koneksi ke Server Utama berhasil, user isi username+password → muncul error "Isi username & password" (padahal field terisi).
+84. **Root cause**: HTTP server mini di `src/lan-sync/http-server.ts` hanya memproses body berdasarkan header `Content-Length`. Namun React Native fetch di Android (via OkHttp) terkadang mengirim POST request dengan `Transfer-Encoding: chunked` (tanpa `Content-Length`), sehingga server membaca body sebagai string kosong → handler `loginHandler` throw 400 "Isi username & password".
+85. **Fix**:
+    - Deteksi header `Transfer-Encoding: chunked` dan decode chunk HTTP sesuai RFC 7230 (format `<hex-size>\r\n<data>\r\n...0\r\n\r\n`).
+    - Fallback saat `Content-Length` absen DAN bukan chunked: tunggu event `socket.on("end")` lalu pakai semua data terkumpul sebagai body.
+    - Short-circuit untuk method GET/DELETE/OPTIONS/HEAD tanpa Content-Length agar tidak hang menunggu `end`.
+    - Tipe `contentLength` jadi `number | null` agar bisa bedakan "0 bytes" vs "header absen".
+86. **Dampak**: Login dari kasir terhubung sekarang mengirim body dengan benar; semua POST/PUT/DELETE request lintas device via LAN juga aman. Butuh **build APK baru** supaya native TCP server membawa fix ini.

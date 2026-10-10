@@ -121,7 +121,8 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
       // String concat selalu bekerja di platform manapun.
       let accumulated = "";
       let headParsed = false;
-      let contentLength = 0;
+      let contentLength: number | null = null; // null = Content-Length absen
+      let transferChunked = false;
       let method = "";
       let path = "";
       let headers: Record<string, string> = {};
@@ -159,6 +160,45 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
         } catch { /* noop */ }
       };
 
+      // Decode Transfer-Encoding: chunked body ke plain string.
+      // Format: `<hex-size>\r\n<data>\r\n...0\r\n\r\n`.
+      // Return `null` kalau belum lengkap (0-sized chunk + CRLF terakhir belum tiba).
+      const decodeChunkedBody = (raw: string): string | null => {
+        let out = "";
+        let pos = 0;
+        while (pos < raw.length) {
+          const crlf = raw.indexOf("\r\n", pos);
+          if (crlf < 0) return null;
+          const sizeHex = raw.slice(pos, crlf).split(";")[0].trim();
+          if (sizeHex.length === 0) return null;
+          const size = parseInt(sizeHex, 16);
+          if (!Number.isFinite(size) || size < 0) return "";
+          pos = crlf + 2;
+          if (size === 0) {
+            // Terakhir — abaikan trailer headers kalau ada
+            return out;
+          }
+          if (raw.length < pos + size + 2) return null; // belum lengkap
+          out += raw.slice(pos, pos + size);
+          pos += size;
+          // Harus diikuti CRLF setelah data chunk
+          if (raw.slice(pos, pos + 2) !== "\r\n") return null;
+          pos += 2;
+        }
+        return null;
+      };
+
+      const dispatch = async (bodyStr: string) => {
+        if (responseSent) return;
+        try {
+          const resp = await handleRequest(method, path, headers, bodyStr);
+          sendResponse(resp);
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : "Server error";
+          bail(500, detail);
+        }
+      };
+
       socket.on("data", async (chunk: any) => {
         try {
           if (responseSent) return;
@@ -192,27 +232,69 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
               headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
             }
             headParsed = true;
-            contentLength = Number(headers["content-length"] || "0") || 0;
-            if (contentLength > BODY_LIMIT_BYTES) {
+            const clHeader = headers["content-length"];
+            contentLength = clHeader !== undefined ? (Number(clHeader) || 0) : null;
+            const te = (headers["transfer-encoding"] || "").toLowerCase();
+            transferChunked = te.includes("chunked");
+            if (contentLength !== null && contentLength > BODY_LIMIT_BYTES) {
               bail(413, "Body terlalu besar");
               return;
             }
             // Simpan sisa setelah header sebagai mulai body
             accumulated = bodyStart;
+
+            // GET/DELETE/OPTIONS tanpa body yang eksplisit — langsung dispatch
+            // kalau tidak ada CL dan tidak chunked (biasanya method tanpa body)
+            // supaya tidak hang menunggu `end`.
+            if (contentLength === null && !transferChunked && (method === "GET" || method === "DELETE" || method === "OPTIONS" || method === "HEAD")) {
+              await dispatch(accumulated);
+              return;
+            }
           }
 
-          // Setelah header di-parse: tunggu sampai body cukup
-          if (Buffer.byteLength(accumulated, "utf8") >= contentLength) {
-            const bodyStr = contentLength > 0
-              ? Buffer.from(accumulated, "utf8").subarray(0, contentLength).toString("utf8")
-              : "";
-            const resp = await handleRequest(method, path, headers, bodyStr);
-            sendResponse(resp);
+          // Transfer-Encoding: chunked — coba decode setiap kali ada data baru.
+          if (transferChunked) {
+            if (accumulated.length > BODY_LIMIT_BYTES) {
+              bail(413, "Body terlalu besar");
+              return;
+            }
+            const decoded = decodeChunkedBody(accumulated);
+            if (decoded !== null) {
+              await dispatch(decoded);
+            }
+            return;
+          }
+
+          // Content-Length path klasik
+          if (contentLength !== null) {
+            if (Buffer.byteLength(accumulated, "utf8") >= contentLength) {
+              const bodyStr = contentLength > 0
+                ? Buffer.from(accumulated, "utf8").subarray(0, contentLength).toString("utf8")
+                : "";
+              await dispatch(bodyStr);
+            }
+            return;
+          }
+
+          // CL absen & bukan chunked → tunggu socket.end sebagai delimiter.
+          if (accumulated.length > BODY_LIMIT_BYTES) {
+            bail(413, "Body terlalu besar");
           }
         } catch (e) {
           const detail = e instanceof Error ? e.message : "Server error";
           bail(500, detail);
         }
+      });
+
+      socket.on("end", async () => {
+        try {
+          if (responseSent) return;
+          if (!headParsed) return; // koneksi putus sebelum header lengkap
+          // Fallback: Content-Length absen & bukan chunked → semua data terkumpul = body.
+          if (contentLength === null && !transferChunked) {
+            await dispatch(accumulated);
+          }
+        } catch { /* noop */ }
       });
 
       socket.on("error", () => { /* client disconnect */ });
