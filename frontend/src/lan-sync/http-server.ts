@@ -85,7 +85,18 @@ async function handleRequest(method: string, path: string, headers: Record<strin
 
   let parsedBody: unknown = null;
   if (body) {
-    try { parsedBody = JSON.parse(body); } catch { parsedBody = body; }
+    let bodyToParse = body;
+    // SAFETY NET: Pada beberapa device Android, chunk Uint8Array dari TCP
+    // socket bocor ke accumulator sebagai "123,34,117,..." (hasil
+    // Uint8Array.toString() default). Deteksi pola & decode kembali ke UTF-8
+    // supaya JSON.parse berikutnya sukses.
+    if (/^[\d]+(,[\d]+)+$/.test(body.trim())) {
+      try {
+        const codes = body.trim().split(",").map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n) && n >= 0 && n < 256);
+        bodyToParse = codes.map((n) => String.fromCharCode(n)).join("");
+      } catch { /* keep original */ }
+    }
+    try { parsedBody = JSON.parse(bodyToParse); } catch { parsedBody = bodyToParse; }
   }
 
   let res: LocalResponse;
@@ -125,20 +136,45 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
       let dispatched = false;
 
       // Normalisasi chunk apapun → string UTF-8 (dipakai jika setEncoding gagal).
+      // CRITICAL: react-native-tcp-socket@6.4 di Android emit chunk sebagai
+      // Uint8Array (bukan Buffer polyfill). `String(uint8array)` memberikan
+      // "123,34,117,..." (comma-separated digits) — BUKAN teks. Jadi urutan
+      // konversi harus: TextDecoder → Buffer.from → manual decode char-by-char.
       const chunkToString = (chunk: any): string => {
         if (chunk == null) return "";
         if (typeof chunk === "string") return chunk;
+        // 1. TextDecoder: tersedia natif di Hermes & memahami Uint8Array langsung.
+        try {
+          if (typeof TextDecoder !== "undefined") {
+            // @ts-ignore - lib dom tidak selalu ada di tsconfig RN
+            return new TextDecoder("utf-8").decode(chunk);
+          }
+        } catch { /* fall through */ }
+        // 2. Buffer polyfill — sometimes OK, sometimes fails on Hermes.
         try {
           if (Buffer.isBuffer(chunk)) return chunk.toString("utf8");
         } catch { /* fall through */ }
         try {
-          return Buffer.from(chunk).toString("utf8");
+          const buf = Buffer.from(chunk);
+          const s = buf.toString("utf8");
+          // Sanity check: kalau hasilnya terlihat seperti "123,34,..." berarti
+          // Buffer.from gagal silently; coba manual decode.
+          if (/^\d+,\d+,/.test(s)) throw new Error("buffer decode mismatch");
+          return s;
         } catch { /* fall through */ }
+        // 3. Manual decode char-by-char (Latin-1 / ASCII — cukup untuk HTTP + JSON).
         try {
-          return String.fromCharCode.apply(null, Array.from(chunk as any));
-        } catch {
-          return String(chunk);
-        }
+          const len = (chunk as any).length ?? 0;
+          let out = "";
+          for (let i = 0; i < len; i++) {
+            const code = (chunk as any)[i];
+            if (typeof code === "number") out += String.fromCharCode(code);
+          }
+          if (out) return out;
+        } catch { /* fall through */ }
+        // 4. Last resort — JANGAN pakai String(chunk) karena menghasilkan
+        //    "123,34,..." untuk Uint8Array. Return empty supaya parser bail.
+        return "";
       };
 
       const bail = (status: number, msg: string) => {

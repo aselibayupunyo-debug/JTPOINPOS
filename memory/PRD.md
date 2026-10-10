@@ -206,3 +206,12 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
     - Short-circuit untuk method GET/DELETE/OPTIONS/HEAD tanpa Content-Length agar tidak hang menunggu `end`.
     - Tipe `contentLength` jadi `number | null` agar bisa bedakan "0 bytes" vs "header absen".
 86. **Dampak**: Login dari kasir terhubung sekarang mengirim body dengan benar; semua POST/PUT/DELETE request lintas device via LAN juga aman. Butuh **build APK baru** supaya native TCP server membawa fix ini.
+
+
+## Session 2026-06 (Iter 23) — Fix Login LAN REAL ROOT CAUSE (Uint8Array toString leak)
+87. **Diagnosis dari screenshot user**: Error di client berbunyi `Isi username & password [body=string keys=- preview=123,34,117,115,101,114,110,97,109,101,34,58,34,97,100,109,10...]`. Decode char codes: `123,34,117,115,101,114,110,97,109,101,34,58,34,97,100,109,105,110,34` = `{"username":"admin"`.
+88. **Root cause**: Chunk Uint8Array dari `react-native-tcp-socket` ternyata lolos ke `String(chunk)` fallback di `chunkToString()`, yang menghasilkan comma-separated decimal digits ("123,34,117,...") — BUKAN teks. Walaupun `socket.setEncoding('utf8')` sudah dipanggil, Buffer polyfill `.toString('utf8')` tidak selalu reliable di Hermes Android — kadang jatuh ke default `Uint8Array.toString()` yang mengembalikan comma-separated digits. Server kemudian menerima body sebagai string comma-digits, `JSON.parse` gagal, `parsedBody` tetap string → handler `loginHandler` destructure dari string = `undefined` → error.
+89. **Fix**:
+    - **Rewrite `chunkToString()`** di `src/lan-sync/http-server.ts`: pakai `TextDecoder` (native di Hermes) sebagai PATH UTAMA. Tambah sanity check pada hasil `Buffer.from().toString()` — kalau hasilnya match pola `^\d+,\d+,` artinya decode gagal, lanjut ke manual char-by-char decode. Hapus `String(chunk)` fallback yang memicu bug.
+    - **Safety net di `handleRequest()`**: Sebelum `JSON.parse(body)`, cek apakah body match pola comma-digits (`^\d+(,\d+)+$`). Kalau iya, decode balik ke UTF-8 string via `String.fromCharCode`, lalu baru JSON.parse. Lapisan defense ini juga meng-handle kalau ada edge case lain yang menghasilkan comma-digits.
+90. **Dampak**: Semua POST/PUT/DELETE lintas device via LAN sekarang bisa decode body JSON dengan benar. Butuh **build APK baru** supaya native TCP server bawa fix ini.
