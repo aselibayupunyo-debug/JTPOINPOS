@@ -186,3 +186,12 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 
 **Catatan**: Fix ini butuh **generate build APK baru** — tidak cukup redeploy. Prebuild Expo akan menulis ulang AndroidManifest.xml dengan flag cleartext.
 
+
+
+## Session 2026-06 (Iter 21) — Fix APK Install & Device Mode Indicator
+81. **Fix APK "paket tampaknya tidak valid"**: Dihapus duplikat `usesCleartextTraffic` di app.json (satu di `android` root, satu lagi di dalam `expo-build-properties` plugin). Deployment agent memvalidasi `expo_native_config_ok: true`. User perlu generate build APK baru via Publish untuk fix berlaku.
+82. **Device Mode Indicator** (P1): Komponen `LanModeBanner` baru (`src/components/lan-mode-banner.tsx`) + hook reaktif `useLanMode` (`src/lan-sync/use-lan-mode.ts`). Di-inject di header layar Kasir di bawah SyncBanner.
+    - Mode **SERVER**: Badge hijau brand + port + status "Aktif/Mati" (ambil dari `getLanSyncServerStatus()` tiap 15s)
+    - Mode **KASIR TERHUBUNG**: Badge biru info + host:port + dot status (hijau=terhubung, kuning=cek, merah=terputus); ping `/health` tiap 10s via `pingLanSyncServer`
+    - Mode **MANDIRI**: Banner disembunyikan agar tampilan tetap bersih (default)
+    - Re-poll config saat app jadi aktif (AppState listener) agar user yang ganti mode di settings langsung ter-refleksi.
