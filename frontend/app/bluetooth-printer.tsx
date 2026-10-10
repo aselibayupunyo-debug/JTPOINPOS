@@ -132,7 +132,7 @@ export default function BluetoothPrinterScreen() {
           <View style={[styles.card, { backgroundColor: colors.brandTertiary }]}>
             <Text style={styles.productName}>Routing order dapur</Text>
             <Text style={[styles.muted, { marginTop: 4, lineHeight: 20 }]}>
-              Produk yang dicentang "Cetak ke printer dapur" akan otomatis dicetak ke printer kedua ini saat transaksi selesai (misal: order makanan ke dapur, order minuman ke bar).
+              Produk yang dicentang {`"Cetak ke printer dapur"`} akan otomatis dicetak ke printer kedua ini saat transaksi selesai (misal: order makanan ke dapur, order minuman ke bar).
             </Text>
           </View>
         ) : null}
@@ -238,7 +238,7 @@ export default function BluetoothPrinterScreen() {
             • Printer thermal umum (Bellav, Panda, Xprinter, Rongta) biasanya pakai Bluetooth Classic SPP.{"\n"}
             • Pastikan Bluetooth HP & lokasi aktif saat scan.{"\n"}
             • Jika printer tidak muncul, pair dulu di pengaturan Android (biasanya PIN: 0000 / 1234).{"\n"}
-            • Setelah printer tersimpan, tombol "Cetak Thermal" akan aktif di layar struk & riwayat.
+            • Setelah printer tersimpan, tombol {`"Cetak Thermal"`} akan aktif di layar struk & riwayat.
           </Text>
         </View>
       </ScrollView>
