@@ -1,4 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
+import { useKeepAwake } from "expo-keep-awake";
 import { Stack } from "expo-router";
 import { LogBox } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -13,6 +14,10 @@ import { ToastProvider } from "@/src/toast";
 LogBox.ignoreAllLogs(true);
 
 export default function RootLayout() {
+  // Jaga layar HP tetap menyala selama aplikasi dibuka. Penting untuk:
+  // - Mode "Server Utama" (HP server tak boleh sleep agar HTTP server tetap jalan)
+  // - Kasir aktif (user tidak perlu bolak-balik unlock HP)
+  useKeepAwake();
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
