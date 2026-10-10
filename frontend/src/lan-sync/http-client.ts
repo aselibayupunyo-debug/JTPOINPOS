@@ -19,8 +19,10 @@ export class LanOfflineError extends Error {
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
 
-/** Timeout default agar UI tidak hang kalau Server tidak respond. */
-const REQUEST_TIMEOUT_MS = 15_000;
+/** Timeout default agar UI tidak hang kalau Server tidak respond.
+ *  Dipanjang (30s) untuk mengakomodasi payload besar seperti list produk
+ *  dengan gambar base64 di jaringan Wi-Fi lambat atau Tailscale. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();

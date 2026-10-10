@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, Sc
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAppStyles } from "@/src/app-styles";
+import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import {
   DeviceMode,
@@ -48,6 +49,7 @@ export default function LanSyncScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const { logout } = useAuth();
 
   const [config, setConfig] = useState<LanConfig | null>(null);
   const [serverStatus, setServerStatus] = useState<{ running: boolean; port: number | null }>({ running: false, port: null });
@@ -76,13 +78,18 @@ export default function LanSyncScreen() {
 
   const changeMode = async (mode: DeviceMode) => {
     if (mode === config.mode) return;
+    const warning = mode === "client"
+      ? "Mode akan diubah ke \"Kasir Terhubung\". Anda akan logout dan harus login ulang menggunakan akun yang terdaftar di HP Server Utama."
+      : config.mode === "client"
+        ? `Mode akan diubah ke "${MODE_LABEL[mode].title}". Anda akan logout dan harus login ulang dengan akun di perangkat ini.`
+        : `Mode akan diubah ke "${MODE_LABEL[mode].title}". Aplikasi mungkin perlu memuat ulang data.`;
     Alert.alert(
       "Ganti mode perangkat?",
-      `Mode akan diubah ke "${MODE_LABEL[mode].title}". Aplikasi mungkin perlu memuat ulang data.`,
+      warning,
       [
         { text: "Batal", style: "cancel" },
         {
-          text: "Ganti",
+          text: "Ganti & logout",
           onPress: async () => {
             setBusy(true);
             try {
@@ -104,6 +111,12 @@ export default function LanSyncScreen() {
                 }
               }
               refreshStatus();
+              // Force logout — token yang tersimpan di SecureStore mungkin
+              // dari DB lama (lokal vs server). Setelah ganti mode, user
+              // wajib login ulang supaya token sesuai dengan DB yang aktif.
+              setTimeout(() => {
+                logout().catch(() => undefined);
+              }, 600);
             } finally {
               setBusy(false);
             }
