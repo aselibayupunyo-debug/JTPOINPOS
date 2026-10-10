@@ -120,6 +120,16 @@ export default function LoginScreen() {
                 <Text style={{ color: colors.brandPrimary, fontSize: 14, fontWeight: "700" }}>Lupa password? Masuk darurat</Text>
               </View>
             </Pressable>
+            <Pressable
+              testID="open-lan-sync-from-login"
+              onPress={() => router.push("/lan-sync" as any)}
+              style={{ minHeight: 44, alignItems: "center", justifyContent: "center", marginTop: 2 }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="git-network-outline" size={16} color={colors.muted} />
+                <Text style={{ color: colors.muted, fontSize: 13, fontWeight: "700" }}>Sinkronisasi Jaringan (Mode Perangkat)</Text>
+              </View>
+            </Pressable>
           </View>
           <Text style={[styles.muted, { textAlign: "center", marginTop: 16 }]}>Semua data tersimpan 100% di perangkat Anda · Tanpa server · Tanpa internet.</Text>
         </ScrollView>
