@@ -126,7 +126,16 @@ export async function registerHandler(ctx: Ctx): Promise<any> {
 
 export async function loginHandler(ctx: Ctx): Promise<any> {
   const { username, password } = ctx.body || {};
-  if (!username || !password) throw new HttpError(400, "Isi username & password");
+  if (!username || !password) {
+    // Diagnostic: tunjukkan apa yg benar2 diterima server supaya mudah debug
+    // kalau LAN sync bermasalah (body kosong, keys salah, dll).
+    const bodyType = ctx.body === null ? "null" : typeof ctx.body;
+    const keys = ctx.body && typeof ctx.body === "object" ? Object.keys(ctx.body).join(",") : "-";
+    const bodyPreview = ctx.body !== null && ctx.body !== undefined
+      ? (typeof ctx.body === "string" ? ctx.body.slice(0, 60) : JSON.stringify(ctx.body).slice(0, 60))
+      : "-";
+    throw new HttpError(400, `Isi username & password [body=${bodyType} keys=${keys} preview=${bodyPreview}]`);
+  }
   const db = await getDb();
   const row = await db.getFirstAsync<any>("SELECT * FROM users WHERE username = ?", [username]);
   if (!row) throw new HttpError(401, "Username/password salah");

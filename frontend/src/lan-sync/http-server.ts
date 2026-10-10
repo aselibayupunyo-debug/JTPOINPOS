@@ -115,19 +115,16 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
 
   return new Promise((resolve, reject) => {
     const server = TcpSocket.createServer((socket: any) => {
-      // Pakai string buffer alih-alih Buffer karena chunk yang diterima
-      // dari react-native-tcp-socket di Android bisa jadi Uint8Array mentah
-      // yang tidak compatible dengan Buffer.indexOf/Buffer.concat polyfill.
-      // String concat selalu bekerja di platform manapun.
-      let accumulated = "";
-      let headParsed = false;
-      let contentLength: number | null = null; // null = Content-Length absen
-      let transferChunked = false;
-      let method = "";
-      let path = "";
-      let headers: Record<string, string> = {};
+      // Minta library decode chunk sebagai UTF-8 string langsung. Lebih
+      // reliable dibanding konversi Buffer manual di Android (chunk kadang
+      // base64/Uint8Array mentah tergantung versi RN).
+      try { socket.setEncoding?.("utf8"); } catch { /* noop */ }
 
-      // Normalisasi chunk apapun → string UTF-8.
+      let accumulated = "";
+      let responseSent = false;
+      let dispatched = false;
+
+      // Normalisasi chunk apapun → string UTF-8 (dipakai jika setEncoding gagal).
       const chunkToString = (chunk: any): string => {
         if (chunk == null) return "";
         if (typeof chunk === "string") return chunk;
@@ -145,24 +142,23 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
       };
 
       const bail = (status: number, msg: string) => {
+        if (responseSent) return;
+        responseSent = true;
         try {
           socket.end(buildResponse(status, JSON.stringify({ detail: msg })));
         } catch { /* noop */ }
       };
 
-      let responseSent = false;
       const sendResponse = (resp: Buffer) => {
         if (responseSent) return;
         responseSent = true;
         try {
-          // CRITICAL: pakai `socket.end(buffer)` BUKAN `write()` + `end()` terpisah.
           socket.end(resp);
         } catch { /* noop */ }
       };
 
       // Decode Transfer-Encoding: chunked body ke plain string.
-      // Format: `<hex-size>\r\n<data>\r\n...0\r\n\r\n`.
-      // Return `null` kalau belum lengkap (0-sized chunk + CRLF terakhir belum tiba).
+      // Return `null` kalau belum lengkap, string (bisa kosong) kalau selesai.
       const decodeChunkedBody = (raw: string): string | null => {
         let out = "";
         let pos = 0;
@@ -172,26 +168,92 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
           const sizeHex = raw.slice(pos, crlf).split(";")[0].trim();
           if (sizeHex.length === 0) return null;
           const size = parseInt(sizeHex, 16);
-          if (!Number.isFinite(size) || size < 0) return "";
+          if (!Number.isFinite(size) || size < 0) return out;
           pos = crlf + 2;
-          if (size === 0) {
-            // Terakhir — abaikan trailer headers kalau ada
-            return out;
-          }
-          if (raw.length < pos + size + 2) return null; // belum lengkap
+          if (size === 0) return out;
+          if (raw.length < pos + size + 2) return null;
           out += raw.slice(pos, pos + size);
           pos += size;
-          // Harus diikuti CRLF setelah data chunk
           if (raw.slice(pos, pos + 2) !== "\r\n") return null;
           pos += 2;
         }
         return null;
       };
 
-      const dispatch = async (bodyStr: string) => {
-        if (responseSent) return;
+      const tryParseAndDispatch = async (final: boolean) => {
+        if (responseSent || dispatched) return;
+        const sep = accumulated.indexOf("\r\n\r\n");
+        if (sep < 0) {
+          if (final) bail(400, "Request malformed (header incomplete)");
+          return;
+        }
+        const headText = accumulated.slice(0, sep);
+        const bodyRaw = accumulated.slice(sep + 4);
+        const firstLineEnd = headText.indexOf("\r\n");
+        const statusLine = firstLineEnd < 0 ? headText : headText.slice(0, firstLineEnd);
+        const parts = statusLine.split(" ");
+        if (parts.length < 2 || !parts[0] || !parts[1]) {
+          bail(400, "Request malformed (status line)");
+          return;
+        }
+        const method = parts[0].toUpperCase();
+        const path = parts[1];
+        const headers: Record<string, string> = {};
+        const headerLines = firstLineEnd < 0 ? [] : headText.slice(firstLineEnd + 2).split("\r\n");
+        for (const line of headerLines) {
+          if (!line) continue;
+          const idx = line.indexOf(":");
+          if (idx < 0) continue;
+          headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+        }
+
+        const clHeader = headers["content-length"];
+        const te = (headers["transfer-encoding"] || "").toLowerCase();
+        const transferChunked = te.includes("chunked");
+        const contentLength: number | null = clHeader !== undefined ? (Number(clHeader) || 0) : null;
+
+        if (contentLength !== null && contentLength > BODY_LIMIT_BYTES) {
+          bail(413, "Body terlalu besar");
+          return;
+        }
+        if (bodyRaw.length > BODY_LIMIT_BYTES * 1.5) {
+          bail(413, "Request terlalu besar");
+          return;
+        }
+
+        let body: string;
+        if (transferChunked) {
+          const decoded = decodeChunkedBody(bodyRaw);
+          if (decoded === null) {
+            if (!final) return; // tunggu chunk tambahan
+            body = bodyRaw; // best-effort kalau terminator belum tiba
+          } else {
+            body = decoded;
+          }
+        } else if (contentLength !== null && contentLength > 0) {
+          // Pakai byte length agar aman untuk multi-byte UTF-8.
+          if (Buffer.byteLength(bodyRaw, "utf8") < contentLength && !final) {
+            return; // tunggu data lagi
+          }
+          body = Buffer.from(bodyRaw, "utf8").subarray(0, contentLength).toString("utf8");
+        } else if (contentLength === 0) {
+          body = "";
+        } else {
+          // CL absen & bukan chunked.
+          // Untuk method tanpa body yang umum, langsung dispatch dengan body ""
+          // (biar GET/HEAD/DELETE/OPTIONS tidak hang menunggu `end`).
+          if (method === "GET" || method === "HEAD" || method === "DELETE" || method === "OPTIONS") {
+            body = bodyRaw; // biasanya kosong
+          } else if (!final) {
+            return; // tunggu socket.end
+          } else {
+            body = bodyRaw;
+          }
+        }
+
+        dispatched = true;
         try {
-          const resp = await handleRequest(method, path, headers, bodyStr);
+          const resp = await handleRequest(method, path, headers, body);
           sendResponse(resp);
         } catch (e) {
           const detail = e instanceof Error ? e.message : "Server error";
@@ -202,98 +264,25 @@ export async function startLanSyncServer(port: number): Promise<{ port: number }
       socket.on("data", async (chunk: any) => {
         try {
           if (responseSent) return;
-          accumulated += chunkToString(chunk);
-          if (accumulated.length > 64 * 1024 && !headParsed) {
-            bail(413, "Header terlalu besar");
-            return;
-          }
-
-          if (!headParsed) {
-            const sep = accumulated.indexOf("\r\n\r\n");
-            if (sep < 0) return; // tunggu chunk berikutnya
-            const headText = accumulated.slice(0, sep);
-            const bodyStart = accumulated.slice(sep + 4);
-            // Parse status line
-            const firstLineEnd = headText.indexOf("\r\n");
-            const statusLine = firstLineEnd < 0 ? headText : headText.slice(0, firstLineEnd);
-            const parts = statusLine.split(" ");
-            if (parts.length < 2 || !parts[0] || !parts[1]) {
-              bail(400, "Request malformed (status line)");
-              return;
-            }
-            method = parts[0].toUpperCase();
-            path = parts[1];
-            headers = {};
-            const headerLines = firstLineEnd < 0 ? [] : headText.slice(firstLineEnd + 2).split("\r\n");
-            for (const line of headerLines) {
-              if (!line) continue;
-              const idx = line.indexOf(":");
-              if (idx < 0) continue;
-              headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
-            }
-            headParsed = true;
-            const clHeader = headers["content-length"];
-            contentLength = clHeader !== undefined ? (Number(clHeader) || 0) : null;
-            const te = (headers["transfer-encoding"] || "").toLowerCase();
-            transferChunked = te.includes("chunked");
-            if (contentLength !== null && contentLength > BODY_LIMIT_BYTES) {
-              bail(413, "Body terlalu besar");
-              return;
-            }
-            // Simpan sisa setelah header sebagai mulai body
-            accumulated = bodyStart;
-
-            // GET/DELETE/OPTIONS tanpa body yang eksplisit — langsung dispatch
-            // kalau tidak ada CL dan tidak chunked (biasanya method tanpa body)
-            // supaya tidak hang menunggu `end`.
-            if (contentLength === null && !transferChunked && (method === "GET" || method === "DELETE" || method === "OPTIONS" || method === "HEAD")) {
-              await dispatch(accumulated);
-              return;
-            }
-          }
-
-          // Transfer-Encoding: chunked — coba decode setiap kali ada data baru.
-          if (transferChunked) {
-            if (accumulated.length > BODY_LIMIT_BYTES) {
-              bail(413, "Body terlalu besar");
-              return;
-            }
-            const decoded = decodeChunkedBody(accumulated);
-            if (decoded !== null) {
-              await dispatch(decoded);
-            }
-            return;
-          }
-
-          // Content-Length path klasik
-          if (contentLength !== null) {
-            if (Buffer.byteLength(accumulated, "utf8") >= contentLength) {
-              const bodyStr = contentLength > 0
-                ? Buffer.from(accumulated, "utf8").subarray(0, contentLength).toString("utf8")
-                : "";
-              await dispatch(bodyStr);
-            }
-            return;
-          }
-
-          // CL absen & bukan chunked → tunggu socket.end sebagai delimiter.
-          if (accumulated.length > BODY_LIMIT_BYTES) {
-            bail(413, "Body terlalu besar");
-          }
+          accumulated += (typeof chunk === "string" ? chunk : chunkToString(chunk));
+          await tryParseAndDispatch(false);
         } catch (e) {
-          const detail = e instanceof Error ? e.message : "Server error";
-          bail(500, detail);
+          bail(500, e instanceof Error ? e.message : "Server error");
         }
       });
 
       socket.on("end", async () => {
         try {
           if (responseSent) return;
-          if (!headParsed) return; // koneksi putus sebelum header lengkap
-          // Fallback: Content-Length absen & bukan chunked → semua data terkumpul = body.
-          if (contentLength === null && !transferChunked) {
-            await dispatch(accumulated);
-          }
+          await tryParseAndDispatch(true);
+        } catch { /* noop */ }
+      });
+
+      // Fallback terakhir di Android: kadang 'end' tidak fire tapi 'close' iya.
+      socket.on("close", async () => {
+        try {
+          if (responseSent) return;
+          await tryParseAndDispatch(true);
         } catch { /* noop */ }
       });
 
