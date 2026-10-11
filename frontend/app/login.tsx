@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { login } from "@/src/api";
+import { emergencyLogin, login } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { useTheme } from "@/src/theme";
@@ -44,21 +44,28 @@ export default function LoginScreen() {
 
   const submitEmergency = async () => {
     setEmergencyError("");
-    if (emergencyPwd.trim() !== EMERGENCY_PASSWORD) {
+    const pwd = emergencyPwd.trim();
+    if (!pwd) {
+      setEmergencyError("Isi password darurat.");
+      return;
+    }
+    // Pre-check lokal supaya pesan error konsisten tanpa harus roundtrip.
+    if (pwd !== EMERGENCY_PASSWORD) {
       setEmergencyError("Password darurat salah.");
       return;
     }
-    // Auto-login sebagai admin default + arahkan ke profil tanpa butuh password saat ini.
     setBusy(true);
     try {
-      const result = await login("admin", "admin");
+      // Pakai endpoint khusus `/auth/emergency-login` supaya tetap jalan
+      // meskipun username/password akun owner sudah diganti dari default admin.
+      const result = await emergencyLogin(pwd);
       await signIn(result);
       setEmergencyOpen(false);
       setEmergencyPwd("");
       // AuthProvider akan redirect ke /(tabs). Setelah itu dorong ke profil dalam mode emergency.
       setTimeout(() => router.push({ pathname: "/profile", params: { emergency: "1" } }), 220);
     } catch (e) {
-      setEmergencyError(e instanceof Error ? e.message : "Gagal membuka akun admin.");
+      setEmergencyError(e instanceof Error ? e.message : "Gagal membuka akun owner.");
     } finally {
       setBusy(false);
     }

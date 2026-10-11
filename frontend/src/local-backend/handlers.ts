@@ -146,6 +146,37 @@ export async function loginHandler(ctx: Ctx): Promise<any> {
   return { token, user: await meFromUserId(row.id) };
 }
 
+/**
+ * Login darurat: hanya butuh password darurat (shared secret) yang disimpan
+ * di konstanta `EMERGENCY_PASSWORD`. Validasi di server supaya tetap jalan
+ * walaupun username/password owner sudah diganti.
+ *
+ * Cara kerja:
+ * 1. Validasi body.emergency_password cocok dengan secret konstanta.
+ * 2. Cari user owner (role=owner) paling awal di tabel users.
+ * 3. Terbitkan session token baru untuk user owner tsb.
+ *
+ * Catatan: public route — tidak butuh Bearer token.
+ */
+const EMERGENCY_PASSWORD_SERVER = "kasirjtpoin";
+export async function emergencyLoginHandler(ctx: Ctx): Promise<any> {
+  const { emergency_password } = ctx.body || {};
+  if (!emergency_password || String(emergency_password).trim() !== EMERGENCY_PASSWORD_SERVER) {
+    throw new HttpError(401, "Password darurat salah");
+  }
+  const db = await getDb();
+  // Prefer akun owner; fallback ke user pertama kalau owner tidak ada
+  // (misal admin diganti ke role lain secara tidak sengaja).
+  let row = await db.getFirstAsync<any>("SELECT * FROM users WHERE role = 'owner' ORDER BY created_at ASC LIMIT 1");
+  if (!row) {
+    row = await db.getFirstAsync<any>("SELECT * FROM users ORDER BY created_at ASC LIMIT 1");
+  }
+  if (!row) throw new HttpError(404, "Belum ada akun di perangkat ini");
+  const token = await randomToken();
+  await db.runAsync("INSERT INTO sessions (token,user_id,created_at) VALUES (?,?,?)", [token, row.id, nowIso()]);
+  return { token, user: await meFromUserId(row.id) };
+}
+
 async function meFromUserId(userId: string): Promise<any> {
   const db = await getDb();
   const row = await db.getFirstAsync<any>("SELECT * FROM users WHERE id = ?", [userId]);

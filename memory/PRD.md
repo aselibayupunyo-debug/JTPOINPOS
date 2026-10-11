@@ -215,3 +215,13 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
     - **Rewrite `chunkToString()`** di `src/lan-sync/http-server.ts`: pakai `TextDecoder` (native di Hermes) sebagai PATH UTAMA. Tambah sanity check pada hasil `Buffer.from().toString()` — kalau hasilnya match pola `^\d+,\d+,` artinya decode gagal, lanjut ke manual char-by-char decode. Hapus `String(chunk)` fallback yang memicu bug.
     - **Safety net di `handleRequest()`**: Sebelum `JSON.parse(body)`, cek apakah body match pola comma-digits (`^\d+(,\d+)+$`). Kalau iya, decode balik ke UTF-8 string via `String.fromCharCode`, lalu baru JSON.parse. Lapisan defense ini juga meng-handle kalau ada edge case lain yang menghasilkan comma-digits.
 90. **Dampak**: Semua POST/PUT/DELETE lintas device via LAN sekarang bisa decode body JSON dengan benar. Butuh **build APK baru** supaya native TCP server bawa fix ini.
+
+
+## Session 2026-06 (Iter 24) — Fix Emergency Login + Returns Price Edit
+91. **Bug Emergency Password**: Password darurat `kasirjtpoin` hanya jalan kalau akun default (admin/admin). Setelah user ganti username atau password → `login("admin","admin")` fail → error "Username/password salah".
+92. **Fix Emergency**:
+    - Endpoint lokal baru `POST /auth/emergency-login` (public, no auth) di `src/local-backend/handlers.ts`.
+    - Handler validasi `emergency_password` cocok dengan konstanta server-side (`kasirjtpoin`), lalu cari akun owner tertua (`WHERE role='owner' ORDER BY created_at ASC LIMIT 1`), fallback ke user tertua kalau owner tidak ada, lalu terbitkan session token baru untuk akun tsb.
+    - Helper `emergencyLogin(pwd)` di `src/api.ts` dan `submitEmergency()` di `app/login.tsx` di-rewire supaya pakai endpoint baru alih-alih `login("admin","admin")`.
+    - Dampak: Password darurat selalu bisa buka akun owner apapun kondisi credentialnya.
+93. **Feature Edit Harga Retur**: UI retur penjualan & pembelian direstruktur. Baris produk kini punya 2 kolom berdampingan: (a) Jumlah (−/qty/+) dengan border rounded, (b) Harga satuan (bisa diedit) dengan label eksplisit. Harga pakai pola `priceDraft` seperti qty — tampil `formatRupiah(l.price)` saat idle, berubah ke angka plain saat input difokuskan. Subtotal otomatis update. Tombol trash merah di kanan nama produk untuk hapus baris cepat.

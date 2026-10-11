@@ -21,6 +21,7 @@ type Handler = (ctx: Ctx) => Promise<any>;
 const ROUTES: { method: Method; pattern: string; handler: Handler; public?: boolean }[] = [
   // Auth
   { method: "POST", pattern: "/auth/login", handler: h.loginHandler, public: true },
+  { method: "POST", pattern: "/auth/emergency-login", handler: h.emergencyLoginHandler, public: true },
   { method: "POST", pattern: "/auth/register", handler: h.registerHandler, public: true },
   { method: "GET", pattern: "/auth/me", handler: h.meHandler },
   { method: "POST", pattern: "/auth/logout", handler: h.logoutHandler },

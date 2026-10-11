@@ -30,6 +30,7 @@ export default function ReturnsScreen() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [qtyDraft, setQtyDraft] = useState<Record<string, string>>({});
+  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
 
   useEffect(() => {
     apiRequest<Product[]>("/products").then((list) => setProducts(list.filter((p) => (p.product_type || "goods") === "goods"))).catch(() => undefined);
@@ -140,43 +141,65 @@ export default function ReturnsScreen() {
           <View style={[styles.card, { marginTop: 10 }]}>
             <Text style={styles.cardTitle}>Barang akan diretur</Text>
             {lines.map((l) => (
-              <View key={l.product.id} style={[styles.listRow, { paddingVertical: 10 }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.productName}>{l.product.name}</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
-                    <Pressable onPress={() => setQty(l.product.id, l.qty - 1)} style={styles.iconButton}><Ionicons name="remove" size={14} color={colors.brandPrimary} /></Pressable>
-                    <TextInput
-                      value={qtyDraft[l.product.id] ?? formatQtyID(l.qty)}
-                      onChangeText={(t) => {
-                        const { display, value } = normalizeQtyInput(t);
-                        setQtyDraft((d) => ({ ...d, [l.product.id]: display }));
-                        if (value !== null && value > 0) setQty(l.product.id, value);
-                      }}
-                      onBlur={() => {
-                        const draft = qtyDraft[l.product.id];
-                        if (draft !== undefined) {
-                          const { value } = normalizeQtyInput(draft);
+              <View key={l.product.id} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+                <View style={styles.between}>
+                  <Text style={[styles.productName, { flex: 1 }]} numberOfLines={2}>{l.product.name}</Text>
+                  <Pressable testID={`return-remove-${l.product.id}`} onPress={() => setQty(l.product.id, 0)} hitSlop={8} style={{ padding: 4 }}>
+                    <Ionicons name="trash-outline" size={18} color={colors.error} />
+                  </Pressable>
+                </View>
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 8, alignItems: "center" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.muted, { fontSize: 11, marginBottom: 4 }]}>Jumlah</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Pressable onPress={() => setQty(l.product.id, l.qty - 1)} style={styles.iconButton}><Ionicons name="remove" size={14} color={colors.brandPrimary} /></Pressable>
+                      <TextInput
+                        testID={`return-qty-${l.product.id}`}
+                        value={qtyDraft[l.product.id] ?? formatQtyID(l.qty)}
+                        onChangeText={(t) => {
+                          const { display, value } = normalizeQtyInput(t);
+                          setQtyDraft((d) => ({ ...d, [l.product.id]: display }));
                           if (value !== null && value > 0) setQty(l.product.id, value);
-                        }
-                        setQtyDraft((d) => { const n = { ...d }; delete n[l.product.id]; return n; });
-                      }}
-                      keyboardType="decimal-pad"
-                      style={{ width: 60, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary }}
-                    />
-                    <Pressable onPress={() => setQty(l.product.id, l.qty + 1)} style={styles.iconButton}><Ionicons name="add" size={14} color={colors.brandPrimary} /></Pressable>
-                    <Text style={styles.muted}> × </Text>
+                        }}
+                        onBlur={() => {
+                          const draft = qtyDraft[l.product.id];
+                          if (draft !== undefined) {
+                            const { value } = normalizeQtyInput(draft);
+                            if (value !== null && value > 0) setQty(l.product.id, value);
+                          }
+                          setQtyDraft((d) => { const n = { ...d }; delete n[l.product.id]; return n; });
+                        }}
+                        keyboardType="decimal-pad"
+                        style={{ flex: 1, textAlign: "center", color: colors.onSurface, fontWeight: "700", borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingVertical: 6 }}
+                      />
+                      <Pressable onPress={() => setQty(l.product.id, l.qty + 1)} style={styles.iconButton}><Ionicons name="add" size={14} color={colors.brandPrimary} /></Pressable>
+                    </View>
+                  </View>
+                  <View style={{ flex: 1.4 }}>
+                    <Text style={[styles.muted, { fontSize: 11, marginBottom: 4 }]}>Harga satuan (bisa diedit)</Text>
                     <TextInput
-                      value={String(Math.round(l.price))}
+                      testID={`return-price-${l.product.id}`}
+                      value={priceDraft[l.product.id] ?? formatRupiah(l.price)}
+                      onFocus={() => setPriceDraft((d) => ({ ...d, [l.product.id]: String(Math.round(l.price)) }))}
                       onChangeText={(t) => {
-                        const n = Number(String(t).replace(/\D/g, ""));
+                        const digits = String(t).replace(/\D/g, "");
+                        setPriceDraft((d) => ({ ...d, [l.product.id]: digits }));
+                        const n = Number(digits);
                         if (Number.isFinite(n) && n >= 0) setPrice(l.product.id, n);
                       }}
+                      onBlur={() => {
+                        setPriceDraft((d) => { const n = { ...d }; delete n[l.product.id]; return n; });
+                      }}
                       keyboardType="number-pad"
-                      style={{ minWidth: 80, textAlign: "right", color: colors.onSurface, fontWeight: "700", borderBottomWidth: 1, borderBottomColor: colors.brandPrimary }}
+                      selectTextOnFocus
+                      style={{ textAlign: "right", color: colors.onSurface, fontWeight: "700", borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}
                     />
                   </View>
                 </View>
-                <Text style={[styles.cardTitle, { color: colors.brandPrimary }]}>{formatRupiah(l.qty * l.price)}</Text>
+                <View style={[styles.between, { marginTop: 6 }]}>
+                  <Text style={styles.muted}>Subtotal</Text>
+                  <Text style={[styles.cardTitle, { color: colors.brandPrimary }]}>{formatRupiah(l.qty * l.price)}</Text>
+                </View>
               </View>
             ))}
           </View>

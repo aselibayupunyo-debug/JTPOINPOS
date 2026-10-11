@@ -313,6 +313,17 @@ export async function login(username: string, password: string) {
   });
 }
 
+/**
+ * Login darurat memakai shared secret `emergency_password`. Dipakai kalau
+ * user lupa username/password akun owner. Server akan terbitkan session
+ * token untuk akun owner tertua.
+ */
+export async function emergencyLogin(emergencyPassword: string) {
+  return apiRequest<{ token: string; user: User }>("/auth/emergency-login", {
+    method: "POST", body: JSON.stringify({ emergency_password: emergencyPassword }),
+  });
+}
+
 export async function register(payload: { business_name: string; owner_name: string; username: string; password: string }) {
   // Map ke format handler lokal (display_name).
   return apiRequest<{ token: string; user: User }>("/auth/register", {

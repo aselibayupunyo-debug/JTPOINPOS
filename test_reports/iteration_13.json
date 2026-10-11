@@ -1,0 +1,43 @@
+{
+  "summary": "Frontend-only review for 2 bug fixes in JTPOIN POS (offline Expo app): (1) Emergency login with 'kasirjtpoin' now independent from admin/admin credentials; (2) Manual price editing in returns screen. ENVIRONMENT LIMITATION: the app's local SQLite backend intentionally throws 'Mode offline hanya tersedia di aplikasi Android/iOS native, bukan preview web.' on web (src/local-backend/db.ts:21). This means all authenticated API calls (login, emergency login, change profile, create return, list products) cannot execute in the web preview and must be verified on a native Android/iOS build. I verified via code review + partial UI testing that: Emergency-login client pre-check correctly shows 'Password darurat salah' for a wrong password (TEST PASS on web). Login screen, emergency modal, and returns screen all render correctly. The server-side implementation of /auth/emergency-login in src/local-backend/handlers.ts:162-178 is correct — it validates against the constant 'kasirjtpoin', then looks up the earliest owner (role='owner' ORDER BY created_at ASC) with a fallback to the first user, so it will work regardless of whether admin's username/password was changed. The returns.tsx price-edit UI (lines 178-197) now has a dedicated labeled 'Harga satuan (bisa diedit)' TextInput with keyboardType='number-pad', selectTextOnFocus, digit-only sanitation, and subtotal re-computed as qty*price — bug fix #2 is correctly implemented. No regressions spotted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "All authenticated flows on web preview",
+        "issue": "Local SQLite backend is unavailable on web (expo-sqlite not supported by Metro web). The app surfaces this via error 'Mode offline hanya tersedia di aplikasi Android/iOS native, bukan preview web.' Any functional validation of emergency-login/profile-change/returns-submit must be done on an Android/iOS build (or on Expo Go via the QR code), not via Playwright on web.",
+        "affected_testIDs": ["submit-auth", "emergency-submit", "save-profile", "submit-return", "confirm-return"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Styling API", "issue": "Deprecation warnings in console: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' and 'props.pointerEvents is deprecated. Use style.pointerEvents'. Source is RN style props used across screens/components — not blocking but should be migrated to the new API."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "User-reported bug fixes look correct via code review. Request user to validate on native Android build (Expo Go or EAS build) because web preview cannot run SQLite.",
+    "Suggest adding a graceful banner on login screen when running on web: 'Preview web hanya untuk tampilan. Fungsi login/data butuh aplikasi Android.' so testers aren't confused by the raw error from db.ts.",
+    "Migrate 'shadow*' style props to 'boxShadow' and 'pointerEvents' prop to 'style.pointerEvents' across the codebase to clear RN deprecation warnings."
+  ],
+  "critical_code_review_comments": [
+    "Emergency-login fix is correctly implemented in src/local-backend/handlers.ts (lines 161-178): validates shared secret 'kasirjtpoin' server-side, then resolves user via SELECT * FROM users WHERE role='owner' ORDER BY created_at ASC LIMIT 1 with a fallback to the earliest user. This path is independent of the current admin username/password, which directly addresses bug #1.",
+    "Route /auth/emergency-login is registered as public (no bearer required) in src/local-backend/index.ts:24.",
+    "Client-side pre-check in app/login.tsx:53 blocks the API call for a wrong password so the user sees 'Password darurat salah' without a roundtrip — matches requirement.",
+    "Returns price-editing (app/returns.tsx:178-197) uses a dedicated TextInput with testID 'return-price-<id>', number-pad keyboard, digit-only normalization (line 185: replace(/\\D/g, '')), setPrice updates line.price, and subtotal is derived as l.qty*l.price (lines 65, 201). Submitted payload sends price: l.price (line 92). Correct.",
+    "Minor: emergency-login handler returns the owner's token for an operator who may have become 'manager' role; the fallback branch (any user) could unintentionally expose a cashier account if there is no owner. Current seed guarantees role='owner', so safe in practice.",
+    "Minor: priceDraft state resets to String(Math.round(l.price)) on focus (line 183) — good UX. On blur the draft is cleared and the formatted rupiah value is re-shown.",
+    "Observed deprecation warnings in web preview console (not blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (no FastAPI backend; local SQLite only, not reachable on web)", "frontend": "Code review complete; functional runtime validation blocked by web-preview SQLite limitation"},
+  "seed_data_creation": "Not applicable — the local SQLite auto-seeds admin/admin on first launch (src/local-backend/index.ts:234-295).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "This offline Expo app uses expo-sqlite which does NOT run on web (explicit throw in src/local-backend/db.ts:21). Playwright web tests cannot execute login/profile/returns flows. For future testing: either (a) ask main agent to shim a web-compatible SQLite (sql.js) only for test runs, or (b) rely on code review + run on Expo Go via the device QR. The emergency login endpoint is /auth/emergency-login (public). It takes { emergency_password } and returns { token, user }. The returns price testID pattern is return-price-<product_id> and the pick testID is return-pick-<product_id>.",
+  "rca_of_issue": "Bug 1 RCA: Original emergency flow probably logged in client-side by injecting admin/admin into the normal /auth/login flow; after the admin credentials were changed, that call failed with 'Username/password salah'. Fix: added a dedicated server endpoint /auth/emergency-login that validates only the shared secret and resolves the owner by role lookup (not credentials). Reproduction requires native build (web preview blocked). Bug 2 RCA: Previous returns UI combined qty + price inside a single compound input (likely multiplication display or disabled price). Fix: split into two labeled fields with number-pad input dedicated to price edits; state tracked via priceDraft map keyed by product id to avoid uncontrolled TextInput re-formatting while typing."
+}
