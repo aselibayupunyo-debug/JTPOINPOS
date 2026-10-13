@@ -233,3 +233,4 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 - Setiap HP (termasuk Kasir Terhubung) aktivasi sendiri.
 - Layar `/activation` (menu Lainnya → Aktivasi Lisensi) + generator rahasia (password master `bayu270386`).
 - Banner status demo di tab Kasir & Lainnya.
+- Restore backup ZIP hanya untuk perangkat yang sudah diaktivasi (cek di apiRequest /restore + layar backup).

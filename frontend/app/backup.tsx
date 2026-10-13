@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAppStyles } from "@/src/app-styles";
 import { exportBackupZip, importBackupZip } from "@/src/backup";
 import { Header } from "@/src/components/header";
+import { refreshLicense, RESTORE_LOCKED_MESSAGE } from "@/src/license";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
 
@@ -26,6 +27,14 @@ export default function BackupScreen() {
   };
 
   const doImport = async () => {
+    const lic = await refreshLicense();
+    if (!lic.activated) {
+      Alert.alert("Fitur khusus versi aktif", RESTORE_LOCKED_MESSAGE, [
+        { text: "Tutup", style: "cancel" },
+        { text: "Aktivasi", onPress: () => router.push("/activation") },
+      ]);
+      return;
+    }
     const picked = await DocumentPicker.getDocumentAsync({ type: ["application/zip", "application/x-zip-compressed", "application/octet-stream"], copyToCacheDirectory: true });
     if (picked.canceled) return;
     Alert.alert(
@@ -62,7 +71,7 @@ export default function BackupScreen() {
         </View>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Restore dari file ZIP</Text>
-          <Text style={[styles.muted, { marginTop: 6 }]}>Pilih file backup .zip untuk memulihkan. Data lama akan diganti.</Text>
+          <Text style={[styles.muted, { marginTop: 6 }]}>Pilih file backup .zip untuk memulihkan. Data lama akan diganti. (Khusus versi yang sudah diaktivasi)</Text>
           <Pressable testID="do-import" disabled={busy !== null} onPress={doImport} style={[styles.outlineButton, { marginTop: 14 }, busy && { opacity: 0.5 }]}>
             {busy === "import" ? <ActivityIndicator color={colors.brandPrimary} /> : <Text style={styles.outlineText}>Pulihkan dari ZIP</Text>}
           </Pressable>

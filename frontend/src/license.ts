@@ -130,6 +130,8 @@ export async function isLocked(): Promise<boolean> {
 
 export const LOCKED_MESSAGE = "Masa demo 3 hari telah habis. Data tetap bisa dilihat, tetapi transaksi baru memerlukan aktivasi. Buka menu Lainnya → Aktivasi Lisensi.";
 
+export const RESTORE_LOCKED_MESSAGE = "Restore backup hanya tersedia untuk versi yang sudah diaktivasi. Buka menu Lainnya → Aktivasi Lisensi.";
+
 export function useLicense() {
   const [status, setStatus] = useState<LicenseStatus | null>(cached);
   useEffect(() => {
