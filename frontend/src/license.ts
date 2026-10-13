@@ -18,7 +18,7 @@ export const TRIAL_DAYS = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LICENSE_SECRET = "JTPOIN#POS@2026!lisensi-offline";
 /** Password master untuk membuka Generator Kode (khusus pemilik aplikasi). */
-export const MASTER_PASSWORD = "jtpoinmaster2026";
+export const MASTER_PASSWORD = "bayu270386";
 
 const K_TRIAL_START = "jtpoin_trial_start_v1";
 const K_LAST_SEEN = "jtpoin_trial_last_seen_v1";

@@ -231,5 +231,5 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 - Demo 3 hari sejak pertama dibuka; deteksi jam HP dimundurkan.
 - Demo habis & belum aktif: semua request non-GET (kecuali /auth/*) diblokir di `apiRequest` (src/api.ts). Data tetap bisa dilihat.
 - Setiap HP (termasuk Kasir Terhubung) aktivasi sendiri.
-- Layar `/activation` (menu Lainnya → Aktivasi Lisensi) + generator rahasia (password master `jtpoinmaster2026`).
+- Layar `/activation` (menu Lainnya → Aktivasi Lisensi) + generator rahasia (password master `bayu270386`).
 - Banner status demo di tab Kasir & Lainnya.
