@@ -9,6 +9,7 @@ import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { AdminPasswordModal } from "@/src/components/admin-password-modal";
 import { Header } from "@/src/components/header";
+import { LicenseBanner } from "@/src/components/license-banner";
 import { SyncBanner } from "@/src/components/sync-banner";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -55,6 +56,7 @@ export default function LainnyaScreen() {
     { icon: "archive-outline", title: "Backup & Restore (ZIP)", detail: "Simpan dan pulihkan seluruh data", path: "/backup", ownerOnly: true },
     { icon: "print-outline", title: "Pengaturan toko & struk", detail: "Logo, printer 58/80mm, WhatsApp", path: "/settings", permission: "settings" },
     { icon: "git-network-outline", title: "Sinkronisasi Jaringan", detail: "Multi-perangkat via Wi-Fi / Tailscale", path: "/lan-sync", ownerOnly: true },
+    { icon: "key-outline", title: "Aktivasi Lisensi", detail: "Status demo, ID perangkat & kode aktivasi", path: "/activation" },
     { icon: "book-outline", title: "Buku Panduan Manual", detail: "Cara pakai semua fitur JTPOIN POS", path: "/manual" },
     { icon: "person-circle-outline", title: "Profil & Password", detail: "Ubah nama tampilan & password admin", path: "/profile", ownerOnly: true },
   ];
@@ -91,6 +93,7 @@ export default function LainnyaScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Header eyebrow={user?.business_name} title="Lainnya" subtitle="Operasional & pengaturan toko" />
         <SyncBanner />
+        <LicenseBanner />
         <View style={styles.greenCard}>
           <Text style={styles.white}>Pusat kendali</Text>
           <Text style={styles.bigWhite}>{user?.business_name}</Text>

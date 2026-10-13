@@ -79,6 +79,7 @@ export default function RootLayout() {
                     <Stack.Screen name="promos" />
                     <Stack.Screen name="lan-sync" />
                     <Stack.Screen name="tailscale-guide" />
+                    <Stack.Screen name="activation" />
                   </Stack>
                 </AuthProvider>
               </SyncProvider>

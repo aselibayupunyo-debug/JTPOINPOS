@@ -10,6 +10,7 @@
 import { getLanConfig } from "@/src/lan-sync/device-mode";
 import { remoteFetch, LanOfflineError } from "@/src/lan-sync/http-client";
 import { localFetch } from "@/src/local-backend";
+import { isLocked, LOCKED_MESSAGE } from "@/src/license";
 import { storage } from "@/src/utils/storage";
 
 export const TOKEN_KEY = "kasirku_auth_token";
@@ -249,6 +250,11 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   const token = await storage.secureGet<string | null>(TOKEN_KEY, null);
   const method = parseMethod(options.method);
   const body = parseBody(options.body as any);
+
+  // Mode demo habis & belum aktivasi → hanya boleh baca data (dan login/logout).
+  if (method !== "GET" && !path.startsWith("/auth/") && (await isLocked())) {
+    throw new Error(LOCKED_MESSAGE);
+  }
 
   // Routing berdasarkan mode device:
   // - "client": semua request diteruskan ke Server Utama via HTTP

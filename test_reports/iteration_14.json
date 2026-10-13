@@ -1,0 +1,42 @@
+{
+  "summary": "Frontend-only testing (mobile viewport 390x844) of the new JTPOIN POS license system (3-day demo + permanent activation). The /activation screen is NOT auth-gated so it was fully exercised on the web preview: all 7 required test flows for the activation UI, generator and expired-demo simulation PASSED via Playwright. The remaining 3 requested items — login admin/admin, visibility of LicenseBanner on Cashier/Lainnya tabs, and the Lainnya menu-activation entry — are BLOCKED on web because the local SQLite backend intentionally throws 'Mode offline hanya tersedia di aplikasi Android/iOS native, bukan preview web.' (src/local-backend/db.ts:21). Those flows were therefore verified by code review only. No functional bugs found in the license subsystem; a few pre-existing React Native deprecation warnings observed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Login admin/admin on web preview (prerequisite for banner & Lainnya tests)",
+        "issue": "Login fails on web with 'Mode offline hanya tersedia di aplikasi Android/iOS native, bukan preview web.' because expo-sqlite is not available on web (src/local-backend/db.ts:17-22). Consequently the LicenseBanner (testID=license-banner), the Lainnya tab (testID=menu-activation) and the apiRequest write-lock in expired state can only be validated on a native Android/iOS build or Expo Go via QR.",
+        "affected_testIDs": ["license-banner", "menu-activation", "submit-auth"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Styling API", "issue": "Deprecation warning in console: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — appears globally across screens (not blocking)."},
+      {"component": "Styling API", "issue": "Deprecation warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — pre-existing (not blocking)."},
+      {"component": "Animated", "issue": "Console warning: 'Animated: useNativeDriver is not supported because the native animated module is missing. Falling back to JS-based animation.' Expected on web preview; verify on native build."}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Request user/main agent to validate on a native Android build (Expo Go or EAS) that: (a) admin/admin login succeeds; (b) Cashier tab and Lainnya tab render testID=license-banner with text 'Mode Demo · sisa 3 hari' (yellow) during demo and 'Masa demo habis' (red) after expiry; (c) testID=menu-activation under Lainnya opens /activation; (d) in expired un-activated state, creating a sale/product returns the LOCKED_MESSAGE 'Masa demo 3 hari telah habis…' and /auth/login still works. All of this was verified only by code review here because the local SQLite backend does not run on web preview.",
+    "Consider shimming expo-sqlite on web (e.g., sql.js) OR adding a lightweight in-memory stub only when Platform.OS==='web' so the preview web becomes testable end-to-end. Current behavior displays the raw SQLite error on the login screen, which is confusing for QA/testers using the preview URL.",
+    "Migrate deprecated RN style props (shadow*, pointerEvents) to the new API to clear the console noise."
+  ],
+  "critical_code_review_comments": [
+    "src/license.ts is well-structured: deviceId is derived from SHA-256(deviceSeed) grouped as XXXX-XXXX; activation code is SHA-256(deviceId+LICENSE_SECRET) grouped XXXX-XXXX-XXXX; activation is validated via constant-time-ish normalizeCode compare (upper + hex-only). normalizeCode strips non-[0-9A-F], so pasted codes with dashes/spaces work.",
+    "Trial-tamper detection uses MIN(secureGet, getItem) for K_TRIAL_START and MAX for K_LAST_SEEN; verified at runtime that setting K_LAST_SEEN into the future (clock-rewound simulation) correctly flags the status as 'Demo habis (jam HP dimundurkan)'.",
+    "apiRequest in src/api.ts:255-257 correctly short-circuits non-GET requests to a locked license, except paths starting with '/auth/'. Login/emergency login therefore remain usable after demo expiry (as required). Can only be verified at runtime on native.",
+    "LicenseBanner (src/components/license-banner.tsx) returns null when activated, uses colors.warning (yellow) during demo and colors.error (red) when expired, with correct Indonesian labels. Tappable with testID=license-banner, min-height 44 (meets touch-target). It is mounted in /(tabs)/lainnya.tsx (line 96); confirm it is also mounted in Cashier tab layout as the request states — I did not verify its presence on the Cashier screen because the Cashier screen is auth-gated.",
+    "activation.tsx has all required testIDs (license-status, device-id, copy-device-id, activation-code-input, activate-button, open-generator, master-password-input, unlock-generator, target-device-id-input, generate-code-button, use-this-device, generated-code, copy-generated-code, activation-back). Generator is locked behind MASTER_PASSWORD='jtpoinmaster2026' (src/license.ts:21).",
+    "Each LAN client device gets its own activation because deviceSeed on Android uses Application.getAndroidId() and on web falls back to a per-storage rand:UUID (verified: launching Playwright with a fresh context yields a different device id each time). This is correctly per-device.",
+    "No MongoDB/_id serialization issues observed in this scope; the backend is intentionally defunct per the agent context note."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (FastAPI backend intentionally defunct — not in scope)", "frontend": "100% (7/7) of license flows testable on web passed; 3 flows blocked by SQLite-on-web limitation and verified via code review."},
+  "seed_data_creation": "None required. Each fresh browser context auto-creates a device seed (rand:UUID) and a trial_start timestamp on first mount of useLicense().",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Flows verified on web (viewport 390x844, URL https://kasir-android-pro.preview.emergentagent.com/activation): (1) Wrong activation code -> toast 'Kode tidak valid' ✓; (2) Open generator + wrong master password -> toast 'Password master salah' ✓; (3) Open generator + correct master password 'jtpoinmaster2026' -> generator unlocked ✓; (4) Tap use-this-device fills target-device-id-input with current device id ✓; (5) Tap generate-code-button -> generated-code renders as XXXX-XXXX-XXXX ✓; (6) Paste generated code into activation-code-input + activate-button -> license-status flips to 'Aktif permanen', activation-code-input disappears, toast 'Aktivasi berhasil / JTPOIN POS aktif permanen di HP ini' shows ✓; (7) Expired simulation: setItem('jtpoin_trial_start_v1', 5 days ago) + remove activation key + reload -> status 'Masa demo habis' with red color and helper text 'Data & laporan tetap bisa dilihat. Transaksi baru dan perubahan data memerlukan aktivasi.' ✓; (8) Bonus: lastSeen set in the future triggers tampered status 'Demo habis (jam HP dimundurkan)' ✓; (9) Bonus: reactivation after expiry works -> 'Aktif permanen' ✓. AsyncStorage on web uses localStorage (not IndexedDB) so storage inspection/mutation is done via localStorage.getItem/setItem. For retest on native: use Expo Go/EAS build to validate login + banner on tabs + apiRequest write-lock.",
+  "rca_of_issue": "No new issue. The pre-existing web-preview limitation remains: expo-sqlite is not loaded on web (src/local-backend/db.ts:17-22) which blocks auth and all /api/* routes on the preview URL. The license subsystem is isolated from SQLite (it only uses AsyncStorage) so it is fully testable on web and works correctly."
+}

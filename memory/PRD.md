@@ -225,3 +225,11 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
     - Helper `emergencyLogin(pwd)` di `src/api.ts` dan `submitEmergency()` di `app/login.tsx` di-rewire supaya pakai endpoint baru alih-alih `login("admin","admin")`.
     - Dampak: Password darurat selalu bisa buka akun owner apapun kondisi credentialnya.
 93. **Feature Edit Harga Retur**: UI retur penjualan & pembelian direstruktur. Baris produk kini punya 2 kolom berdampingan: (a) Jumlah (−/qty/+) dengan border rounded, (b) Harga satuan (bisa diedit) dengan label eksplisit. Harga pakai pola `priceDraft` seperti qty — tampil `formatRupiah(l.price)` saat idle, berubah ke angka plain saat input difokuskan. Subtotal otomatis update. Tombol trash merah di kanan nama produk untuk hapus baris cepat.
+
+## Lisensi Demo 3 Hari + Aktivasi (Juni 2026)
+- `src/license.ts`: ID Perangkat (dari Android ID, format XXXX-XXXX), kode aktivasi = SHA-256(ID + secret) → XXXX-XXXX-XXXX.
+- Demo 3 hari sejak pertama dibuka; deteksi jam HP dimundurkan.
+- Demo habis & belum aktif: semua request non-GET (kecuali /auth/*) diblokir di `apiRequest` (src/api.ts). Data tetap bisa dilihat.
+- Setiap HP (termasuk Kasir Terhubung) aktivasi sendiri.
+- Layar `/activation` (menu Lainnya → Aktivasi Lisensi) + generator rahasia (password master `jtpoinmaster2026`).
+- Banner status demo di tab Kasir & Lainnya.

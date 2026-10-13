@@ -12,6 +12,7 @@ import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
 import { LanModeBanner } from "@/src/components/lan-mode-banner";
 import { SyncBanner } from "@/src/components/sync-banner";
+import { LicenseBanner } from "@/src/components/license-banner";
 import { getScannerEnabled, playScanError, playScanSuccess, setScannerEnabled } from "@/src/scanner-feedback";
 import { useTheme } from "@/src/theme";
 import { useToast } from "@/src/toast";
@@ -338,6 +339,7 @@ export default function KasirScreen() {
           }
         />
         <SyncBanner />
+        <LicenseBanner />
         <LanModeBanner />
         {editingParkedId ? (
           <View style={[styles.card, { backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: colors.brandPrimary }]} testID="editing-parked-banner">
