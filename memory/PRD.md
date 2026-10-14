@@ -241,3 +241,4 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 - Kasir: jasa ber-teknisi memunculkan picker karyawan; item menyimpan technician_id/name + snapshot komisi. Teks 'Stok habis' diganti 'Jasa' untuk produk jasa.
 - Laporan /technician-report (GET /reports/technicians): ringkasan per karyawan + rincian jasa, retur penjualan mengurangi, ekspor PDF & CSV.
 - Backup/restore menyertakan technicians.
+- Ikon aplikasi: logo JTPOIN biru (icon.png + adaptive-icon.png, bg #1F84D2).
