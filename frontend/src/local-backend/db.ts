@@ -139,6 +139,11 @@ CREATE TABLE IF NOT EXISTS expenses (
   json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_expense_biz ON expenses(business_id);
+CREATE TABLE IF NOT EXISTS technicians (
+  id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS expense_categories (
   id TEXT PRIMARY KEY,
   business_id TEXT NOT NULL,

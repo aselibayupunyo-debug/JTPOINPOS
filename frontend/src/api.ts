@@ -44,9 +44,14 @@ export type Product = {
   kitchen_print?: boolean;
   use_price_levels?: boolean;
   image_base64?: string | null;
+  requires_technician?: boolean;
+  commission_type?: "percent" | "fixed";
+  commission_value?: number;
 };
 
-export type CartItem = Product & { quantity: number; line_id?: string; product_id?: string; unit?: string; unit_factor?: number; discount?: number; manual_discount?: number };
+export type Technician = { id: string; name: string; position: string };
+
+export type CartItem = Product & { quantity: number; line_id?: string; product_id?: string; unit?: string; unit_factor?: number; discount?: number; manual_discount?: number; technician_id?: string; technician_name?: string };
 
 export type TransactionKind = "sale" | "purchase" | "sale_return" | "purchase_return";
 export type PaymentKind = "cash" | "credit" | "qris_static" | "custom";

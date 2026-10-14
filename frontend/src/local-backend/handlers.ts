@@ -689,6 +689,56 @@ export async function createCategory(ctx: Ctx): Promise<any> { return upsertSimp
 export async function updateCategory(ctx: Ctx): Promise<any> { return upsertSimple("categories", requireUser(ctx).business_id, ctx.body, ctx.params.id); }
 export async function deleteCategory(ctx: Ctx): Promise<any> { return deleteSimple("categories", requireUser(ctx).business_id, ctx.params.id); }
 
+// ---------- TECHNICIANS (karyawan teknis) ----------
+export async function listTechnicians(ctx: Ctx): Promise<any> { return listSimple("technicians", requireUser(ctx).business_id); }
+export async function createTechnician(ctx: Ctx): Promise<any> { return upsertSimple("technicians", requireUser(ctx).business_id, ctx.body); }
+export async function updateTechnician(ctx: Ctx): Promise<any> { return upsertSimple("technicians", requireUser(ctx).business_id, ctx.body, ctx.params.id); }
+export async function deleteTechnician(ctx: Ctx): Promise<any> { return deleteSimple("technicians", requireUser(ctx).business_id, ctx.params.id); }
+
+function itemCommission(i: any): number {
+  const qty = Number(i.quantity || 0);
+  const value = Number(i.price || 0) * qty - Number(i.discount || 0);
+  const cv = Number(i.commission_value || 0);
+  if (i.commission_type === "fixed") return Math.round(cv * qty);
+  return Math.round(value * cv / 100);
+}
+
+// ---------- REPORT: TECHNICIANS ----------
+export async function reportTechnicians(ctx: Ctx): Promise<any> {
+  const u = requireUser(ctx);
+  const [start, end] = periodRange(ctx.query);
+  const txs = (await txInRange(u.business_id, start, end)).filter((t) => t.transaction_type === "sale" || t.transaction_type === "sale_return");
+  const techs = await listSimple("technicians", u.business_id);
+  const map: Record<string, { technician_id: string; name: string; position: string; count: number; quantity: number; total: number; commission: number; services: Record<string, { name: string; quantity: number; total: number; commission: number }> }> = {};
+  const details: any[] = [];
+  for (const t of txs) {
+    const sign = t.transaction_type === "sale_return" ? -1 : 1;
+    for (const i of t.items || []) {
+      if (!i.technician_id) continue;
+      const tech = techs.find((x: any) => x.id === i.technician_id);
+      const key = i.technician_id;
+      if (!map[key]) map[key] = { technician_id: key, name: tech?.name ?? i.technician_name ?? "-", position: tech?.position ?? "", count: 0, quantity: 0, total: 0, commission: 0, services: {} };
+      const qty = Number(i.quantity || 0) * sign;
+      const total = (Number(i.price || 0) * Number(i.quantity || 0) - Number(i.discount || 0)) * sign;
+      const commission = itemCommission(i) * sign;
+      const m = map[key];
+      m.count += sign; m.quantity += qty; m.total += total; m.commission += commission;
+      const sk = String(i.product_id || i.name);
+      if (!m.services[sk]) m.services[sk] = { name: i.name, quantity: 0, total: 0, commission: 0 };
+      m.services[sk].quantity += qty; m.services[sk].total += total; m.services[sk].commission += commission;
+      details.push({ created_at: t.created_at, invoice_no: t.invoice_no, technician_name: m.name, service: i.name, quantity: qty, total, commission });
+    }
+  }
+  const summary = Object.values(map).map((m) => ({ ...m, services: Object.values(m.services).sort((a, b) => b.total - a.total) })).sort((a, b) => b.total - a.total);
+  return {
+    summary,
+    details,
+    total: summary.reduce((s, m) => s + m.total, 0),
+    commission: summary.reduce((s, m) => s + m.commission, 0),
+    count: summary.reduce((s, m) => s + m.count, 0),
+  };
+}
+
 // ---------- PAYMENT METHODS ----------
 export async function listPaymentMethods(ctx: Ctx): Promise<any> { return listSimple("payment_methods", requireUser(ctx).business_id); }
 export async function createPaymentMethod(ctx: Ctx): Promise<any> { return upsertSimple("payment_methods", requireUser(ctx).business_id, ctx.body); }
@@ -1501,6 +1551,7 @@ export async function restoreHandler(ctx: Ctx): Promise<any> {
   await replaceTable("parked", payload.parked || [], true);
   await replaceTable("shifts", payload.shifts || [], true);
   await replaceTable("promos", payload.promos || [], false);
+  if (Array.isArray(payload.technicians)) await replaceTable("technicians", payload.technicians, false);
 
   await appendAudit(bid, u, "restore", "backup", { restored });
   return { restored };
@@ -1543,6 +1594,7 @@ export async function backup(ctx: Ctx): Promise<any> {
     parked: await dump("parked"),
     shifts: await dump("shifts"),
     promos: await dump("promos"),
+    technicians: await dump("technicians"),
   };
 }
 

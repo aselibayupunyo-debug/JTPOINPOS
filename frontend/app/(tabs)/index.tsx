@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, Promo, ReportSummary, Shift, syncMutation, TransactionDoc } from "@/src/api";
+import { apiRequest, BusinessSettings, cachedGet, CartItem, Contact, formatRupiah, ParkedTransaction, PaymentMethodDoc, Product, Promo, ReportSummary, Shift, syncMutation, Technician, TransactionDoc } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { useAuth } from "@/src/auth-context";
 import { Header } from "@/src/components/header";
@@ -47,6 +47,8 @@ export default function KasirScreen() {
   const [parkName, setParkName] = useState("");
   const [unitPicker, setUnitPicker] = useState<null | { product: Product; options: { name: string; factor: number; price: number }[] }>(null);
   const [editingParkedId, setEditingParkedId] = useState<string | null>(null);
+  const [techPicker, setTechPicker] = useState<null | { product: Product; unit: string; factor: number; price: number }>(null);
+  const [technicians, setTechnicians] = useState<Technician[]>([]);
   const consumedParkedRef = useRef<Set<string>>(new Set());
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [scannerEnabled, setScannerEnabledState] = useState(true);
@@ -113,7 +115,8 @@ export default function KasirScreen() {
           const prod = products.find((p) => p.id === item.product_id);
           if (!prod) return null;
           const unit = item.unit || prod.base_unit || "Pcs";
-          return { ...prod, line_id: `${prod.id}:${unit}`, product_id: prod.id, quantity: item.quantity, unit, unit_factor: item.unit_factor ?? 1, discount: item.discount, price: item.price } as CartItem;
+          const t = item as { technician_id?: string; technician_name?: string };
+          return { ...prod, line_id: `${prod.id}:${unit}${t.technician_id ? `:${t.technician_id}` : ""}`, product_id: prod.id, quantity: item.quantity, unit, unit_factor: item.unit_factor ?? 1, discount: item.discount, price: item.price, technician_id: t.technician_id, technician_name: t.technician_name } as CartItem;
         }).filter(Boolean) as CartItem[];
         if (resumed.length === 0 && match.items.length > 0) {
           toast.error("Produk antrian hilang", "Beberapa produk sudah dihapus dari katalog. Buat ulang transaksi.");
@@ -194,12 +197,18 @@ export default function KasirScreen() {
   const filtered = products.filter((p) => (category === "Semua" || p.category === category) && `${p.name} ${p.barcode} ${p.sku}`.toLowerCase().includes(search.toLowerCase()));
   const totalCart = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const addLineToCart = (product: Product, unit: string, factor: number, unitPrice: number) => {
+  const addLineToCart = (product: Product, unit: string, factor: number, unitPrice: number, tech?: Technician) => {
+    // Jasa yang terhubung ke karyawan teknis → wajib pilih karyawan dulu.
+    if (product.product_type === "service" && product.requires_technician && !tech) {
+      setTechPicker({ product, unit, factor, price: unitPrice });
+      apiRequest<Technician[]>("/technicians").then(setTechnicians).catch(() => setTechnicians([]));
+      return;
+    }
     setCart((current) => {
-      const lineId = `${product.id}:${unit}`;
+      const lineId = `${product.id}:${unit}${tech ? `:${tech.id}` : ""}`;
       const exists = current.find((item) => item.line_id === lineId);
       if (exists) return current.map((item) => item.line_id === lineId ? { ...item, quantity: item.quantity + 1 } : item);
-      return [...current, { ...product, line_id: lineId, product_id: product.id, quantity: 1, price: unitPrice, unit, unit_factor: factor } as CartItem];
+      return [...current, { ...product, line_id: lineId, product_id: product.id, quantity: 1, price: unitPrice, unit, unit_factor: factor, technician_id: tech?.id, technician_name: tech?.name } as CartItem];
     });
   };
 
@@ -272,7 +281,7 @@ export default function KasirScreen() {
         customer_name: name,
         customer_id: customer?.id ?? null,
         price_level_id: priceLevel,
-        items: cart.map((i) => ({ product_id: i.product_id ?? i.id, name: i.name, quantity: i.quantity, price: i.price, cost: i.cost, unit: i.unit ?? "", unit_factor: i.unit_factor ?? 1, discount: i.discount ?? 0 })),
+        items: cart.map((i) => ({ product_id: i.product_id ?? i.id, name: i.name, quantity: i.quantity, price: i.price, cost: i.cost, unit: i.unit ?? "", unit_factor: i.unit_factor ?? 1, discount: i.discount ?? 0, technician_id: i.technician_id, technician_name: i.technician_name })),
         note: "",
         discount_percent: 0, discount_amount: 0, tax_percent: 0, shipping: 0,
       };
@@ -474,7 +483,11 @@ export default function KasirScreen() {
                 )}
                 <Text style={styles.productName} numberOfLines={2}>{p.name}</Text>
                 <Text style={styles.price}>{formatRupiah(priceOf(p))}</Text>
-                <Text style={[styles.stock, p.stock <= p.min_stock && { color: colors.warning }]}>{p.stock > 0 ? `Stok ${p.stock}` : "Stok habis"}</Text>
+                {p.product_type === "service" ? (
+                  <Text style={styles.stock}>Jasa</Text>
+                ) : (
+                  <Text style={[styles.stock, p.stock <= p.min_stock && { color: colors.warning }]}>{p.stock > 0 ? `Stok ${p.stock}` : "Stok habis"}</Text>
+                )}
               </Pressable>
             ))}
           </View>
@@ -601,6 +614,46 @@ export default function KasirScreen() {
         </View>
       </Modal>
 
+      <Modal visible={!!techPicker} transparent animationType="fade" onRequestClose={() => setTechPicker(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: insets.bottom + 20, maxHeight: "80%" }}>
+            <View style={styles.between}>
+              <Text style={styles.cardTitle} testID="tech-picker-title">{techPicker?.product.name}</Text>
+              <Pressable onPress={() => setTechPicker(null)} style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center" }}><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>
+            </View>
+            <Text style={[styles.muted, { marginBottom: 10 }]}>Pilih karyawan teknis yang mengerjakan jasa ini.</Text>
+            <ScrollView>
+              {technicians.length === 0 ? (
+                <View style={{ paddingVertical: 16 }}>
+                  <Text style={styles.muted}>Belum ada karyawan teknis. Tambahkan di Lainnya → Karyawan teknis.</Text>
+                  <Pressable onPress={() => { setTechPicker(null); router.push("/technicians"); }} style={[styles.outlineButton, { marginTop: 12 }]}>
+                    <Text style={styles.outlineText}>Kelola karyawan teknis</Text>
+                  </Pressable>
+                </View>
+              ) : technicians.map((t) => (
+                <Pressable
+                  key={t.id}
+                  testID={`tech-option-${t.id}`}
+                  onPress={() => {
+                    if (!techPicker) return;
+                    addLineToCart(techPicker.product, techPicker.unit, techPicker.factor, techPicker.price, t);
+                    setTechPicker(null);
+                    toast.success("Ditambahkan", `${techPicker.product.name} · ${t.name}`);
+                  }}
+                  style={styles.listRow}
+                >
+                  <View style={styles.settingIcon}><Ionicons name="construct-outline" size={20} color={colors.brandPrimary} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.productName}>{t.name}</Text>
+                    {t.position ? <Text style={styles.muted}>{t.position}</Text> : null}
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={cancelConfirmOpen} transparent animationType="fade" onRequestClose={() => setCancelConfirmOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
           <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
@@ -655,7 +708,7 @@ export default function KasirScreen() {
               shift_id: shift?.id ?? null,
               promo_ids: appliedPromoIds,
               note,
-              items: appliedCart.map((item) => ({ product_id: item.product_id ?? item.id, name: item.name, quantity: item.quantity, price: item.price, cost: item.cost, discount: item.discount ?? 0, unit: item.unit ?? "", unit_factor: item.unit_factor ?? 1, product_type: item.product_type ?? "goods", kitchen_print: !!item.kitchen_print })),
+              items: appliedCart.map((item) => ({ product_id: item.product_id ?? item.id, name: item.name, quantity: item.quantity, price: item.price, cost: item.cost, discount: item.discount ?? 0, unit: item.unit ?? "", unit_factor: item.unit_factor ?? 1, product_type: item.product_type ?? "goods", kitchen_print: !!item.kitchen_print, ...(item.technician_id ? { technician_id: item.technician_id, technician_name: item.technician_name, commission_type: item.commission_type ?? "percent", commission_value: Number(item.commission_value || 0) } : {}) })),
             });
             if (result.queued) {
               toast.info("Transaksi disimpan offline", "Akan dikirim otomatis saat online.");
@@ -833,6 +886,7 @@ function CheckoutSheet({
                 <View style={styles.between}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.productName}>{item.name}{item.unit ? ` · ${item.unit}` : ""}</Text>
+                    {item.technician_name ? <Text testID={`cart-tech-${key}`} style={[styles.muted, { color: colors.brandPrimary, fontWeight: "700" }]}>🔧 {item.technician_name}</Text> : null}
                     {editing === key ? (
                       <View style={[styles.row, { marginTop: 6 }]}>
                         <TextInput

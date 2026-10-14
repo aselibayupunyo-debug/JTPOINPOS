@@ -80,6 +80,8 @@ export default function RootLayout() {
                     <Stack.Screen name="lan-sync" />
                     <Stack.Screen name="tailscale-guide" />
                     <Stack.Screen name="activation" />
+                    <Stack.Screen name="technicians" />
+                    <Stack.Screen name="technician-report" />
                   </Stack>
                 </AuthProvider>
               </SyncProvider>

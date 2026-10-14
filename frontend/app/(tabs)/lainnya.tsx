@@ -48,6 +48,8 @@ export default function LainnyaScreen() {
     { icon: "stats-chart-outline", title: "Laporan laba rugi", detail: "Pendapatan dikurangi HPP & biaya", path: "/profit-loss", permission: "reports" },
     { icon: "wallet-outline", title: "Laporan biaya", detail: "Rekap biaya per pos · PDF & Excel", path: "/expense-report", permission: "reports" },
     { icon: "document-text-outline", title: "Rekap pajak", detail: "DPP + PPN keluaran vs masukan", path: "/tax-report", permission: "reports" },
+    { icon: "ribbon-outline", title: "Laporan pencapaian teknisi", detail: "Jasa & komisi karyawan teknis · PDF & Excel", path: "/technician-report", permission: "reports" },
+    { icon: "construct-outline", title: "Karyawan teknis", detail: "Mekanik, teknisi, barberman, dokter, dll", path: "/technicians", permission: "settings" },
     { icon: "barcode-outline", title: "Cetak barcode label", detail: "Cetak stiker barcode produk", path: "/barcode-print", permission: "inventory" },
     { icon: "pricetags-outline", title: "Kategori barang", detail: "Atur kategori produk", path: "/categories", permission: "inventory" },
     { icon: "card-outline", title: "Metode pembayaran", detail: "Tunai, Kredit, QRIS statis, kustom", path: "/payment-methods", permission: "settings" },

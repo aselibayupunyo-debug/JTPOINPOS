@@ -122,6 +122,13 @@ const ROUTES: { method: Method; pattern: string; handler: Handler; public?: bool
   { method: "GET", pattern: "/reports/expenses", handler: h.reportExpenses },
   { method: "GET", pattern: "/reports/profit-loss", handler: h.reportProfitLoss },
   { method: "GET", pattern: "/reports/tax-summary", handler: h.reportTaxSummary },
+  { method: "GET", pattern: "/reports/technicians", handler: h.reportTechnicians },
+
+  // Technicians (karyawan teknis)
+  { method: "GET", pattern: "/technicians", handler: h.listTechnicians },
+  { method: "POST", pattern: "/technicians", handler: h.createTechnician },
+  { method: "PUT", pattern: "/technicians/:id", handler: h.updateTechnician },
+  { method: "DELETE", pattern: "/technicians/:id", handler: h.deleteTechnician },
 
   // Operators
   { method: "GET", pattern: "/operators", handler: h.listOperators },

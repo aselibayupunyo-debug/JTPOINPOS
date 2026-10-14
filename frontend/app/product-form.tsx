@@ -30,6 +30,9 @@ export default function ProductFormScreen() {
   const [barcode, setBarcode] = useState("");
   const [kitchenPrint, setKitchenPrint] = useState(false);
   const [usePriceLevels, setUsePriceLevels] = useState(false);
+  const [requiresTech, setRequiresTech] = useState(false);
+  const [commissionType, setCommissionType] = useState<"percent" | "fixed">("percent");
+  const [commissionValue, setCommissionValue] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!!id);
@@ -55,6 +58,9 @@ export default function ProductFormScreen() {
         setStock(String(match.stock)); setMinStock(String(match.min_stock));
         setCategory(match.category); setBarcode(match.barcode); setKitchenPrint(!!match.kitchen_print);
         setUsePriceLevels(!!match.use_price_levels);
+        setRequiresTech(!!match.requires_technician);
+        setCommissionType(match.commission_type ?? "percent");
+        setCommissionValue(match.commission_value ? String(match.commission_value) : "");
         setImage(match.image_base64 ?? null);
         setProductType(match.product_type ?? "goods");
         setBaseUnit(match.base_unit ?? "Pcs");
@@ -116,6 +122,9 @@ export default function ProductFormScreen() {
         kitchen_print: kitchenPrint,
         use_price_levels: usePriceLevels,
         image_base64: image,
+        requires_technician: productType === "service" && requiresTech,
+        commission_type: commissionType,
+        commission_value: Number(String(commissionValue).replace(/[^0-9.]/g, "")) || 0,
       });
       if (id) await apiRequest(`/products/${id}`, { method: "PUT", body });
       else await apiRequest("/products", { method: "POST", body });
@@ -177,7 +186,34 @@ export default function ProductFormScreen() {
             <TextInput value={minStock} onChangeText={setMinStock} keyboardType="number-pad" style={styles.input} placeholder="5" placeholderTextColor={colors.muted} />
           </>
         ) : (
-          <Text style={[styles.muted, { marginBottom: 10 }]}>Produk jasa tidak dihitung stok, cocok untuk layanan atau servis.</Text>
+          <>
+            <Text style={[styles.muted, { marginBottom: 10 }]}>Produk jasa tidak dihitung stok, cocok untuk layanan atau servis.</Text>
+            <View style={styles.card}>
+              <View style={styles.between}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.productName}>Terhubung ke karyawan teknis</Text>
+                  <Text style={styles.muted}>Saat transaksi, kasir memilih karyawan yang mengerjakan jasa ini.</Text>
+                </View>
+                <Switch testID="requires-technician-switch" value={requiresTech} onValueChange={setRequiresTech} trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }} thumbColor={colors.onBrandPrimary} />
+              </View>
+              {requiresTech ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.inputLabel}>Komisi karyawan</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                    {(["percent", "fixed"] as const).map((t) => (
+                      <Pressable key={t} testID={`commission-${t}`} onPress={() => setCommissionType(t)} style={[styles.chip, { flex: 1 }, commissionType === t && styles.chipActive]}>
+                        <Text style={[styles.chipText, commissionType === t && styles.chipTextActive]}>{t === "percent" ? "Persen (%)" : "Nominal (Rp)"}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <TextInput testID="input-commission-value" value={commissionValue} onChangeText={setCommissionValue} keyboardType="decimal-pad" style={styles.input} placeholder={commissionType === "percent" ? "Contoh: 10 (persen)" : "Contoh: 5000 per jasa"} placeholderTextColor={colors.muted} />
+                  <Pressable onPress={() => router.push("/technicians")} style={{ minHeight: 36, justifyContent: "center" }}>
+                    <Text style={{ color: colors.brandPrimary, fontWeight: "700", fontSize: 13 }}>Kelola daftar karyawan teknis →</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          </>
         )}
 
         <View style={styles.card}>

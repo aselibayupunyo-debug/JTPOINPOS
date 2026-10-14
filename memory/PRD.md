@@ -234,3 +234,10 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 - Layar `/activation` (menu Lainnya → Aktivasi Lisensi) + generator rahasia (password master `bayu270386`).
 - Banner status demo di tab Kasir & Lainnya.
 - Restore backup ZIP hanya untuk perangkat yang sudah diaktivasi (cek di apiRequest /restore + layar backup).
+
+## Karyawan Teknis & Komisi (Juni 2026)
+- Tabel technicians (nama, jabatan), layar /technicians, menu Lainnya.
+- Produk jasa: toggle requires_technician + commission_type (percent/fixed) + commission_value.
+- Kasir: jasa ber-teknisi memunculkan picker karyawan; item menyimpan technician_id/name + snapshot komisi. Teks 'Stok habis' diganti 'Jasa' untuk produk jasa.
+- Laporan /technician-report (GET /reports/technicians): ringkasan per karyawan + rincian jasa, retur penjualan mengurangi, ekspor PDF & CSV.
+- Backup/restore menyertakan technicians.
