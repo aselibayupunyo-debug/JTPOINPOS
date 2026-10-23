@@ -852,10 +852,13 @@ function CheckoutSheet({
   const grandTotal = afterDisc + taxAmt + shippingNum;
   const kind = method?.kind ?? "cash";
 
-  // Default paid for cash = grand total
+  // Uang diterima default kosong; fokuskan kursor saat sheet pembayaran tunai dibuka.
+  const paidRef = useRef<TextInput>(null);
   useEffect(() => {
-    if (kind === "cash" && !paidText) setPaidText(String(grandTotal));
-  }, [kind, grandTotal, paidText]);
+    if (!visible || kind !== "cash") return;
+    const t = setTimeout(() => paidRef.current?.focus(), 350);
+    return () => clearTimeout(t);
+  }, [visible, kind]);
 
   const paidNumber = Number(paidText.replace(/\D/g, "")) || 0;
   const change = kind === "cash" ? Math.max(paidNumber - grandTotal, 0) : 0;
@@ -1022,7 +1025,7 @@ function CheckoutSheet({
             {kind === "cash" ? (
               <>
                 <Text style={[styles.inputLabel, { marginTop: 15 }]}>Uang diterima</Text>
-                <TextInput testID="paid-input" keyboardType="number-pad" value={paidText} onChangeText={setPaidText} placeholder={String(grandTotal)} placeholderTextColor={colors.muted} style={styles.input} />
+                <TextInput ref={paidRef} testID="paid-input" keyboardType="number-pad" value={paidText} onChangeText={setPaidText} placeholder="Ketik nominal uang diterima" placeholderTextColor={colors.muted} style={styles.input} />
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                   <Pressable testID="cash-exact" onPress={() => setPaidText(String(grandTotal))} style={[styles.chip, { backgroundColor: colors.brandTertiary }]}>
                     <Text style={[styles.chipText, { color: colors.brandPrimary }]}>Uang pas</Text>
