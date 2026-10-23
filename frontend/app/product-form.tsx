@@ -12,6 +12,12 @@ import { useToast } from "@/src/toast";
 
 type UnitRow = { name: string; factor: string; price: string };
 
+function calcMarkup(costText: string, pctText: string): string {
+  const c = Number(String(costText).replace(/\D/g, "")) || 0;
+  const pct = Number(String(pctText).replace(",", ".").replace(/[^0-9.]/g, "")) || 0;
+  return c ? String(Math.round(c * (1 + pct / 100))) : "";
+}
+
 export default function ProductFormScreen() {
   const styles = useAppStyles();
   const { colors } = useTheme();
@@ -31,6 +37,8 @@ export default function ProductFormScreen() {
   const [kitchenPrint, setKitchenPrint] = useState(false);
   const [usePriceLevels, setUsePriceLevels] = useState(false);
   const [requiresTech, setRequiresTech] = useState(false);
+  const [markupOn, setMarkupOn] = useState(false);
+  const [markupPct, setMarkupPct] = useState("");
   const [commissionType, setCommissionType] = useState<"percent" | "fixed">("percent");
   const [commissionValue, setCommissionValue] = useState("");
   const [image, setImage] = useState<string | null>(null);
@@ -59,6 +67,8 @@ export default function ProductFormScreen() {
         setCategory(match.category); setBarcode(match.barcode); setKitchenPrint(!!match.kitchen_print);
         setUsePriceLevels(!!match.use_price_levels);
         setRequiresTech(!!match.requires_technician);
+        setMarkupOn(!!match.markup_enabled);
+        setMarkupPct(match.markup_percent ? String(match.markup_percent) : "");
         setCommissionType(match.commission_type ?? "percent");
         setCommissionValue(match.commission_value ? String(match.commission_value) : "");
         setImage(match.image_base64 ?? null);
@@ -122,6 +132,8 @@ export default function ProductFormScreen() {
         kitchen_print: kitchenPrint,
         use_price_levels: usePriceLevels,
         image_base64: image,
+        markup_enabled: markupOn,
+        markup_percent: Number(String(markupPct).replace(",", ".").replace(/[^0-9.]/g, "")) || 0,
         requires_technician: productType === "service" && requiresTech,
         commission_type: commissionType,
         commission_value: Number(String(commissionValue).replace(/[^0-9.]/g, "")) || 0,
@@ -171,9 +183,19 @@ export default function ProductFormScreen() {
         <Text style={styles.inputLabel}>Nama {productType === "service" ? "jasa" : "produk"}</Text>
         <TextInput testID="input-product-name" value={name} onChangeText={setName} style={styles.input} placeholder={productType === "service" ? "Contoh: Cuci motor" : "Contoh: Kopi susu"} placeholderTextColor={colors.muted} />
         <Text style={styles.inputLabel}>Harga pokok (modal)</Text>
-        <TextInput testID="input-product-cost" value={cost} onChangeText={setCost} keyboardType="number-pad" style={styles.input} placeholder="10000" placeholderTextColor={colors.muted} />
-        <Text style={styles.inputLabel}>Harga jual</Text>
-        <TextInput testID="input-product-price" value={price} onChangeText={setPrice} keyboardType="number-pad" style={styles.input} placeholder="15000" placeholderTextColor={colors.muted} />
+        <TextInput testID="input-product-cost" value={cost} onChangeText={(t) => { setCost(t); if (markupOn) setPrice(calcMarkup(t, markupPct)); }} keyboardType="number-pad" style={styles.input} placeholder="10000" placeholderTextColor={colors.muted} />
+        <Pressable testID="markup-checkbox" onPress={() => { const next = !markupOn; setMarkupOn(next); if (next) setPrice(calcMarkup(cost, markupPct)); }} style={[styles.row, { minHeight: 44, gap: 10, marginBottom: 6 }]}>
+          <Ionicons name={markupOn ? "checkbox" : "square-outline"} size={24} color={markupOn ? colors.brandPrimary : colors.muted} />
+          <Text style={[styles.productName, { flex: 1 }]}>Harga jual otomatis (mark up % dari harga pokok)</Text>
+        </Pressable>
+        {markupOn ? (
+          <>
+            <Text style={styles.inputLabel}>Mark up (%)</Text>
+            <TextInput testID="input-markup-percent" value={markupPct} onChangeText={(t) => { setMarkupPct(t); setPrice(calcMarkup(cost, t)); }} keyboardType="decimal-pad" style={styles.input} placeholder="Contoh: 20" placeholderTextColor={colors.muted} />
+          </>
+        ) : null}
+        <Text style={styles.inputLabel}>Harga jual{markupOn ? " (otomatis)" : ""}</Text>
+        <TextInput testID="input-product-price" value={price} onChangeText={setPrice} editable={!markupOn} keyboardType="number-pad" style={[styles.input, markupOn && { backgroundColor: colors.surfaceTertiary }]} placeholder="15000" placeholderTextColor={colors.muted} />
 
         <Text style={styles.inputLabel}>Satuan dasar</Text>
         <TextInput testID="input-base-unit" value={baseUnit} onChangeText={setBaseUnit} style={styles.input} placeholder="Pcs / Botol / Jam" placeholderTextColor={colors.muted} />

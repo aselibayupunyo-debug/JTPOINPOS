@@ -1,10 +1,11 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import * as Linking from "expo-linking";
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest, formatRupiah, ParkedTransaction } from "@/src/api";
+import { apiRequest, BusinessSettings, Contact, formatRupiah, ParkedTransaction } from "@/src/api";
 import { useAppStyles } from "@/src/app-styles";
 import { Header } from "@/src/components/header";
 import { useTheme } from "@/src/theme";
@@ -19,11 +20,69 @@ export default function ParkedScreen() {
   const [query, setQuery] = useState("");
   const [confirmCancel, setConfirmCancel] = useState<ParkedTransaction | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<BusinessSettings | null>(null);
+  const [customers, setCustomers] = useState<Contact[]>([]);
+  const [shareTarget, setShareTarget] = useState<null | { parked: ParkedTransaction; channel: "wa" | "email" }>(null);
+  const [destination, setDestination] = useState("");
 
   const load = useCallback(async () => {
-    try { setList(await apiRequest<ParkedTransaction[]>("/parked")); }
+    try {
+      setList(await apiRequest<ParkedTransaction[]>("/parked"));
+      apiRequest<BusinessSettings>("/settings").then(setSettings).catch(() => undefined);
+      apiRequest<Contact[]>("/customers").then(setCustomers).catch(() => undefined);
+    }
     catch (e) { toast.error("Gagal memuat", e instanceof Error ? e.message : undefined); }
   }, [toast]);
+
+  const buildText = (p: ParkedTransaction) => {
+    const subtotal = p.items.reduce((s, i) => s + i.price * i.quantity - (i.discount || 0), 0);
+    const lines: string[] = [];
+    lines.push(`*${settings?.business_name ?? "JTPOIN POS"}*`);
+    if (settings?.address) lines.push(settings.address);
+    if (settings?.phone) lines.push(`Telp: ${settings.phone}`);
+    lines.push("", "*STRUK ANTRIAN (BELUM DIBAYAR)*");
+    lines.push(`Pelanggan: ${p.customer_name}`);
+    lines.push(`${p.label} · ${new Date(p.created_at).toLocaleString("id-ID")}`);
+    lines.push("─────────────────────");
+    p.items.forEach((i) => {
+      const t = (i as { technician_name?: string }).technician_name;
+      lines.push(`${i.name}${i.unit ? ` (${i.unit})` : ""}${t ? ` · ${t}` : ""}`);
+      lines.push(`  ${i.quantity} x ${formatRupiah(i.price)}   ${formatRupiah(i.price * i.quantity)}`);
+      if (i.discount) lines.push(`  Diskon: -${formatRupiah(i.discount)}`);
+    });
+    lines.push("─────────────────────");
+    lines.push(`TOTAL        ${formatRupiah(subtotal)}`);
+    if (p.note) lines.push(`Catatan: ${p.note}`);
+    if (settings?.footer_note) lines.push("", settings.footer_note);
+    return lines.join("\n");
+  };
+
+  const openShare = (p: ParkedTransaction, channel: "wa" | "email") => {
+    const c = customers.find((x) => x.id === p.customer_id) ?? customers.find((x) => x.name === p.customer_name);
+    setDestination(channel === "wa" ? (c?.phone ?? "") : "");
+    setShareTarget({ parked: p, channel });
+  };
+
+  const doShare = async () => {
+    if (!shareTarget) return;
+    const text = buildText(shareTarget.parked);
+    try {
+      if (shareTarget.channel === "wa") {
+        let phone = destination.replace(/\D/g, "");
+        if (phone.startsWith("0")) phone = `62${phone.slice(1)}`;
+        const encoded = encodeURIComponent(text);
+        const url = phone ? `whatsapp://send?phone=${phone}&text=${encoded}` : `whatsapp://send?text=${encoded}`;
+        if (await Linking.canOpenURL(url)) await Linking.openURL(url);
+        else if (phone) await Linking.openURL(`https://wa.me/${phone}?text=${encoded}`);
+        else await Share.share({ message: text });
+      } else {
+        const to = destination.trim();
+        if (to && !/^\S+@\S+\.\S+$/.test(to)) return toast.error("Email tidak valid");
+        await Linking.openURL(`mailto:${to}?subject=${encodeURIComponent(`Struk antrian ${shareTarget.parked.customer_name}`)}&body=${encodeURIComponent(text)}`);
+      }
+      setShareTarget(null);
+    } catch (e) { toast.error("Gagal mengirim", e instanceof Error ? e.message : undefined); }
+  };
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const filtered = useMemo(() => {
@@ -113,9 +172,49 @@ export default function ParkedScreen() {
                 {busyId === p.id ? <ActivityIndicator color={colors.onError ?? "#fff"} /> : <Text style={styles.dangerText}>Batalkan</Text>}
               </Pressable>
             </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+              <Pressable testID={`share-wa-${p.id}`} onPress={() => openShare(p, "wa")} style={[styles.outlineButton, { flex: 1, flexDirection: "row", gap: 6 }]}>
+                <Ionicons name="logo-whatsapp" size={18} color={colors.success} />
+                <Text style={styles.outlineText}>WhatsApp</Text>
+              </Pressable>
+              <Pressable testID={`share-email-${p.id}`} onPress={() => openShare(p, "email")} style={[styles.outlineButton, { flex: 1, flexDirection: "row", gap: 6 }]}>
+                <Ionicons name="mail-outline" size={18} color={colors.info} />
+                <Text style={styles.outlineText}>Email</Text>
+              </Pressable>
+            </View>
           </View>
         ))}
       </ScrollView>
+
+      <Modal visible={!!shareTarget} transparent animationType="fade" onRequestClose={() => setShareTarget(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20 }}>
+            <Text style={styles.cardTitle}>Kirim struk via {shareTarget?.channel === "wa" ? "WhatsApp" : "Email"}</Text>
+            <Text style={[styles.muted, { marginTop: 6, marginBottom: 12 }]}>
+              {shareTarget?.parked.customer_name} · {shareTarget ? formatRupiah(shareTarget.parked.items.reduce((s, i) => s + i.price * i.quantity - (i.discount || 0), 0)) : ""}
+            </Text>
+            <Text style={styles.inputLabel}>{shareTarget?.channel === "wa" ? "No. WhatsApp (opsional)" : "Alamat email (opsional)"}</Text>
+            <TextInput
+              testID="share-destination-input"
+              value={destination}
+              onChangeText={setDestination}
+              placeholder={shareTarget?.channel === "wa" ? "08xxxxxxxxxx" : "pelanggan@email.com"}
+              placeholderTextColor={colors.muted}
+              keyboardType={shareTarget?.channel === "wa" ? "phone-pad" : "email-address"}
+              autoCapitalize="none"
+              style={styles.input}
+            />
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Pressable onPress={() => setShareTarget(null)} style={[styles.outlineButton, { flex: 1 }]}>
+                <Text style={styles.outlineText}>Batal</Text>
+              </Pressable>
+              <Pressable testID="confirm-share" onPress={doShare} style={[styles.primaryButton, { flex: 1 }]}>
+                <Text style={styles.primaryButtonText}>Kirim</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal visible={!!confirmCancel} transparent animationType="fade" onRequestClose={() => setConfirmCancel(null)}>
         <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "center", padding: 24 }}>

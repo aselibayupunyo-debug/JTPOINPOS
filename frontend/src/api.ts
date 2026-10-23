@@ -45,6 +45,8 @@ export type Product = {
   use_price_levels?: boolean;
   image_base64?: string | null;
   requires_technician?: boolean;
+  markup_enabled?: boolean;
+  markup_percent?: number;
   commission_type?: "percent" | "fixed";
   commission_value?: number;
 };
