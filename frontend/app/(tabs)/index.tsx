@@ -853,6 +853,7 @@ function CheckoutSheet({
   const kind = method?.kind ?? "cash";
 
   // Uang diterima default kosong; fokuskan kursor saat sheet pembayaran tunai dibuka.
+  const sheetInsets = useSafeAreaInsets();
   const paidRef = useRef<TextInput>(null);
   useEffect(() => {
     if (!visible || kind !== "cash") return;
@@ -876,7 +877,7 @@ function CheckoutSheet({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: "rgba(28,28,30,0.55)", justifyContent: "flex-end" }}>
         <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 26, borderTopRightRadius: 26, maxHeight: "92%" }}>
-          <ScrollView contentContainerStyle={{ padding: 20 }} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: sheetInsets.bottom + 72 }} keyboardShouldPersistTaps="handled">
             <View style={styles.between}>
               <Text style={[styles.title, { fontSize: 22 }]}>Pembayaran</Text>
               <Pressable testID="close-checkout" onPress={onClose}><Ionicons name="close" size={24} color={colors.onSurface} /></Pressable>

@@ -245,3 +245,4 @@ Backend testing: **236/236 PASS** (219 carry-over + 17 new iter-12 tests).
 - Produk: ceklis harga jual otomatis markup % dari harga pokok (markup_enabled, markup_percent).
 - Antrian: kirim struk antrian (belum dibayar) via WhatsApp / Email per transaksi.
 - Kasir: Uang diterima default kosong + autofocus saat sheet pembayaran tunai dibuka.
+- Checkout sheet: paddingBottom = safe-area bottom + 72 agar tombol Selesaikan tidak tertutup navigasi.
